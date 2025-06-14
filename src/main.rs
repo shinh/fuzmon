@@ -1,4 +1,4 @@
-use std::{env, fs, borrow::Cow};
+use std::{env, fs, borrow::Cow, thread::sleep, time::Duration};
 use addr2line::Loader;
 use nix::sys::{ptrace, wait::waitpid};
 use nix::unistd::Pid;
@@ -160,6 +160,53 @@ fn read_pids() -> Vec<u32> {
     pids
 }
 
+fn read_proc_stat(pid: u32) -> Option<(u64, u64)> {
+    let data = fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?;
+    let parts: Vec<&str> = data.split_whitespace().collect();
+    let utime = parts.get(13)?.parse::<u64>().ok()?; // field 14
+    let stime = parts.get(14)?.parse::<u64>().ok()?; // field 15
+    Some((utime, stime))
+}
+
+fn read_total_cpu_time() -> Option<u64> {
+    let data = fs::read_to_string("/proc/stat").ok()?;
+    let line = data.lines().next()?;
+    let mut total = 0u64;
+    for v in line.split_whitespace().skip(1) {
+        total += v.parse::<u64>().ok()?;
+    }
+    Some(total)
+}
+
+fn read_rss_kb(pid: u32) -> Option<u64> {
+    let status = fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
+    for line in status.lines() {
+        if line.starts_with("VmRSS:") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if let Some(val) = parts.get(1) {
+                return val.parse::<u64>().ok();
+            }
+        }
+    }
+    None
+}
+
+fn get_proc_usage(pid: u32) -> Option<(f32, u64)> {
+    let (u1, s1) = read_proc_stat(pid)?;
+    let t1 = read_total_cpu_time()?;
+    sleep(Duration::from_millis(100));
+    let (u2, s2) = read_proc_stat(pid)?;
+    let t2 = read_total_cpu_time()?;
+    let delta_proc = (u2 + s2).saturating_sub(u1 + s1);
+    let delta_total = t2.saturating_sub(t1);
+    if delta_total == 0 {
+        return None;
+    }
+    let cpu = 100.0 * delta_proc as f32 / delta_total as f32;
+    let rss = read_rss_kb(pid).unwrap_or(0);
+    Some((cpu, rss))
+}
+
 fn main() {
     if let Some(pid) = parse_pid() {
         if let Err(e) = attach_and_trace(pid) {
@@ -170,5 +217,10 @@ fn main() {
     }
 
     let pids = read_pids();
-    println!("Found {} PIDs: {:?}", pids.len(), pids);
+    println!("Found {} PIDs", pids.len());
+    for pid in pids {
+        if let Some((cpu, rss)) = get_proc_usage(pid) {
+            println!("PID {:>5}: {:>5.1}% CPU, {:>8} KB RSS", pid, cpu, rss);
+        }
+    }
 }
