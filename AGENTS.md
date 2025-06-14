@@ -5,3 +5,7 @@
 ## Testing
 
 - Run `cargo test`
+
+## Guide
+
+- Check `ai_docs/DESIGN.md` for a rough idea of the final design
