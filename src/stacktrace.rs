@@ -100,6 +100,15 @@ fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
 }
 
 pub fn attach_and_trace(pid: i32) -> nix::Result<()> {
+    let trace = capture_stack_trace(pid)?;
+    println!("Stack trace for pid {}:", pid);
+    for line in trace {
+        println!("{}", line);
+    }
+    Ok(())
+}
+
+pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
     let target = Pid::from_raw(pid);
     ptrace::attach(target)?;
     waitpid(target, None)?;
@@ -107,19 +116,20 @@ pub fn attach_and_trace(pid: i32) -> nix::Result<()> {
     let res = (|| {
         let stack = get_stack_trace(target, 32)?;
         let loader = load_loader(pid);
-        println!("Stack trace for pid {}:", pid);
+        let mut lines = Vec::new();
         for (i, addr) in stack.iter().enumerate() {
-            if let Some((ref l, ref exe)) = loader {
+            let line = if let Some((ref l, ref exe)) = loader {
                 if let Some(info) = describe_addr(l, exe, *addr) {
-                    println!("{:>2}: {:#x} {}", i, addr, info);
+                    format!("{:>2}: {:#x} {}", i, addr, info)
                 } else {
-                    println!("{:>2}: {:#x}", i, addr);
+                    format!("{:>2}: {:#x}", i, addr)
                 }
             } else {
-                println!("{:>2}: {:#x}", i, addr);
-            }
+                format!("{:>2}: {:#x}", i, addr)
+            };
+            lines.push(line);
         }
-        Ok(())
+        Ok(lines)
     })();
 
     let _ = ptrace::detach(target, None);
