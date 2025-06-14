@@ -5,3 +5,9 @@ edition = "2024"
 
 [dependencies]
 nix = { version = "0.28", features = ["ptrace", "process"] }
+addr2line = "0.25"
+object = "0.37"
+memmap2 = "0.9"
+
+[dev-dependencies]
+tempfile = "3"
