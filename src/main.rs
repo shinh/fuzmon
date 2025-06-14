@@ -1,4 +1,4 @@
-use std::{env, fs, borrow::Cow, thread::sleep, time::Duration};
+use std::{env, fs, borrow::Cow, thread::sleep, time::Duration, collections::HashMap};
 use addr2line::Loader;
 use nix::sys::{ptrace, wait::waitpid};
 use nix::unistd::Pid;
@@ -191,14 +191,25 @@ fn read_rss_kb(pid: u32) -> Option<u64> {
     None
 }
 
-fn get_proc_usage(pid: u32) -> Option<(f32, u64)> {
-    let (u1, s1) = read_proc_stat(pid)?;
-    let t1 = read_total_cpu_time()?;
-    sleep(Duration::from_millis(100));
-    let (u2, s2) = read_proc_stat(pid)?;
-    let t2 = read_total_cpu_time()?;
-    let delta_proc = (u2 + s2).saturating_sub(u1 + s1);
-    let delta_total = t2.saturating_sub(t1);
+#[derive(Default)]
+struct ProcState {
+    prev_proc_time: u64,
+    prev_total_time: u64,
+}
+
+fn get_proc_usage(pid: u32, state: &mut ProcState) -> Option<(f32, u64)> {
+    let (u, s) = read_proc_stat(pid)?;
+    let total = read_total_cpu_time()?;
+    let proc_total = u + s;
+    if state.prev_total_time == 0 {
+        state.prev_proc_time = proc_total;
+        state.prev_total_time = total;
+        return None;
+    }
+    let delta_proc = proc_total.saturating_sub(state.prev_proc_time);
+    let delta_total = total.saturating_sub(state.prev_total_time);
+    state.prev_proc_time = proc_total;
+    state.prev_total_time = total;
     if delta_total == 0 {
         return None;
     }
@@ -216,11 +227,18 @@ fn main() {
         return;
     }
 
-    let pids = read_pids();
-    println!("Found {} PIDs", pids.len());
-    for pid in pids {
-        if let Some((cpu, rss)) = get_proc_usage(pid) {
-            println!("PID {:>5}: {:>5.1}% CPU, {:>8} KB RSS", pid, cpu, rss);
+    let mut states: HashMap<u32, ProcState> = HashMap::new();
+    loop {
+        let pids = read_pids();
+        println!("Found {} PIDs", pids.len());
+        for pid in &pids {
+            let state = states.entry(*pid).or_default();
+            if let Some((cpu, rss)) = get_proc_usage(*pid, state) {
+                println!("PID {:>5}: {:>5.1}% CPU, {:>8} KB RSS", pid, cpu, rss);
+            }
         }
+        states.retain(|pid, _| pids.contains(pid));
+        println!();
+        sleep(Duration::from_millis(200));
     }
 }
