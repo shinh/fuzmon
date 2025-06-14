@@ -18,6 +18,6 @@ fn main() {
     loop {
         let pids = read_pids();
         println!("Found {} PIDs: {:?}", pids.len(), pids);
-        thread::sleep(Duration::from_secs(5));
+        thread::sleep(Duration::from_secs(1));
     }
 }
