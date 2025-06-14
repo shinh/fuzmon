@@ -24,7 +24,13 @@ fn parse_pid() -> Option<i32> {
     None
 }
 
-fn find_base_address(pid: i32) -> Option<u64> {
+struct ExeInfo {
+    base: u64,
+    start: u64,
+    end: u64,
+}
+
+fn find_exe_info(pid: i32) -> Option<ExeInfo> {
     let exe = fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
     let maps = fs::read_to_string(format!("/proc/{}/maps", pid)).ok()?;
     for line in maps.lines() {
@@ -32,12 +38,13 @@ fn find_base_address(pid: i32) -> Option<u64> {
             let mut parts = line.split_whitespace();
             if let (Some(range), Some(perms), Some(offset)) = (parts.next(), parts.next(), parts.next()) {
                 if perms.starts_with('r') && perms.contains('x') {
-                    if let Some(start) = range.split('-').next() {
-                        if let (Ok(start_addr), Ok(off)) = (
+                    if let Some((start, end)) = range.split_once('-') {
+                        if let (Ok(start_addr), Ok(end_addr), Ok(off)) = (
                             u64::from_str_radix(start, 16),
+                            u64::from_str_radix(end, 16),
                             u64::from_str_radix(offset, 16),
                         ) {
-                            return Some(start_addr - off);
+                            return Some(ExeInfo { base: start_addr - off, start: start_addr, end: end_addr });
                         }
                     }
                 }
@@ -47,15 +54,20 @@ fn find_base_address(pid: i32) -> Option<u64> {
     None
 }
 
-fn load_loader(pid: i32) -> Option<(Loader, u64)> {
+fn load_loader(pid: i32) -> Option<(Loader, ExeInfo)> {
     let exe_path = fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
     let loader = Loader::new(&exe_path).ok()?;
-    let base = find_base_address(pid)?;
-    Some((loader, base))
+    let info = find_exe_info(pid)?;
+    Some((loader, info))
 }
 
-fn describe_addr(loader: &Loader, base: u64, addr: u64) -> Option<String> {
-    let probe = addr.wrapping_sub(base).wrapping_add(loader.relative_address_base());
+fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64) -> Option<String> {
+    if addr < info.start || addr >= info.end {
+        return None;
+    }
+    let probe = addr
+        .wrapping_sub(info.base)
+        .wrapping_add(loader.relative_address_base());
     let mut info = String::new();
     if let Some(sym) = loader.find_symbol(probe) {
         info.push_str(sym);
@@ -116,8 +128,8 @@ fn attach_and_trace(pid: i32) -> nix::Result<()> {
         let loader = load_loader(pid);
         println!("Stack trace for pid {}:", pid);
         for (i, addr) in stack.iter().enumerate() {
-            if let Some((ref l, base)) = loader {
-                if let Some(info) = describe_addr(l, base, *addr) {
+            if let Some((ref l, ref exe)) = loader {
+                if let Some(info) = describe_addr(l, exe, *addr) {
                     println!("{:>2}: {:#x} {}", i, addr, info);
                 } else {
                     println!("{:>2}: {:#x}", i, addr);
