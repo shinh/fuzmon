@@ -218,6 +218,10 @@ fn get_proc_usage(pid: u32, state: &mut ProcState) -> Option<(f32, u64)> {
     Some((cpu, rss))
 }
 
+fn should_suppress(cpu: f32, rss_kb: u64) -> bool {
+    cpu == 0.0 && rss_kb < 100 * 1024
+}
+
 fn main() {
     if let Some(pid) = parse_pid() {
         if let Err(e) = attach_and_trace(pid) {
@@ -234,7 +238,9 @@ fn main() {
         for pid in &pids {
             let state = states.entry(*pid).or_default();
             if let Some((cpu, rss)) = get_proc_usage(*pid, state) {
-                println!("PID {:>5}: {:>5.1}% CPU, {:>8} KB RSS", pid, cpu, rss);
+                if !should_suppress(cpu, rss) {
+                    println!("PID {:>5}: {:>5.1}% CPU, {:>8} KB RSS", pid, cpu, rss);
+                }
             }
         }
         states.retain(|pid, _| pids.contains(pid));
