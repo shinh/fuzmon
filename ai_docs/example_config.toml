@@ -1,0 +1,12 @@
+[filter]
+ignore_process_name = ["^bash$", "^sshd$"]
+target_user = "myname"
+
+[output]
+format = "json"              # or "msgpack"
+path = "/var/log/fuzmon/"
+rotate = true
+compress = true
+
+[monitor]
+interval_sec = 60
