@@ -8,6 +8,9 @@ nix = { version = "0.28", features = ["ptrace", "process"] }
 addr2line = "0.25"
 object = "0.37"
 memmap2 = "0.9"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
