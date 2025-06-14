@@ -31,10 +31,13 @@ fn find_base_address(pid: i32) -> Option<u64> {
         if line.contains(exe.to_str()?) {
             let mut parts = line.split_whitespace();
             if let (Some(range), Some(perms), Some(offset)) = (parts.next(), parts.next(), parts.next()) {
-                if offset == "00000000" && perms.starts_with('r') && perms.contains('x') {
+                if perms.starts_with('r') && perms.contains('x') {
                     if let Some(start) = range.split('-').next() {
-                        if let Ok(addr) = u64::from_str_radix(start, 16) {
-                            return Some(addr);
+                        if let (Ok(start_addr), Ok(off)) = (
+                            u64::from_str_radix(start, 16),
+                            u64::from_str_radix(offset, 16),
+                        ) {
+                            return Some(start_addr - off);
                         }
                     }
                 }
