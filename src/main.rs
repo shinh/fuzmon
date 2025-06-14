@@ -1,14 +1,22 @@
-use std::{env, fs, borrow::Cow, thread::sleep, time::Duration, collections::HashMap};
+use std::{fs, borrow::Cow, thread::sleep, time::Duration, collections::HashMap};
+use clap::Parser;
 use serde::Deserialize;
 use addr2line::Loader;
 use nix::sys::{ptrace, wait::waitpid};
 use nix::unistd::Pid;
 use std::os::unix::fs::MetadataExt;
 
-#[derive(Default, Clone)]
+#[derive(Parser, Default, Clone)]
+#[command(name = "fuzmon")]
 struct CmdArgs {
+    /// PID to trace
+    #[arg(short, long)]
     pid: Option<i32>,
+    /// Path to configuration file
+    #[arg(short = 'c', long)]
     config: Option<String>,
+    /// User name filter
+    #[arg(long)]
     target_user: Option<String>,
 }
 
@@ -74,44 +82,7 @@ fn merge_config(mut cfg: Config, args: &CmdArgs) -> Config {
 }
 
 fn parse_args() -> CmdArgs {
-    let mut args = env::args().skip(1);
-    let mut out = CmdArgs::default();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-p" | "--pid" => {
-                if let Some(pid_str) = args.next() {
-                    out.pid = Some(pid_str.parse::<i32>().unwrap_or_else(|_| {
-                        eprintln!("Invalid PID: {}", pid_str);
-                        std::process::exit(1);
-                    }));
-                } else {
-                    eprintln!("-p requires a PID argument");
-                    std::process::exit(1);
-                }
-            }
-            "-c" | "--config" => {
-                if let Some(path) = args.next() {
-                    out.config = Some(path);
-                } else {
-                    eprintln!("-c requires a file path");
-                    std::process::exit(1);
-                }
-            }
-            "--target_user" => {
-                if let Some(val) = args.next() {
-                    out.target_user = Some(val);
-                } else {
-                    eprintln!("--target_user requires a value");
-                    std::process::exit(1);
-                }
-            }
-            _ => {
-                eprintln!("Unknown argument: {}", arg);
-                std::process::exit(1);
-            }
-        }
-    }
-    out
+    CmdArgs::parse()
 }
 
 struct ExeInfo {
