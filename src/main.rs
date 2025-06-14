@@ -5,7 +5,7 @@ use nix::sys::{ptrace, wait::waitpid};
 use nix::unistd::Pid;
 use std::os::unix::fs::MetadataExt;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct CmdArgs {
     pid: Option<i32>,
     config: Option<String>,
@@ -64,6 +64,13 @@ fn uid_from_name(name: &str) -> Option<u32> {
 
 fn pid_uid(pid: u32) -> Option<u32> {
     fs::metadata(format!("/proc/{}", pid)).ok().map(|m| m.uid())
+}
+
+fn merge_config(mut cfg: Config, args: &CmdArgs) -> Config {
+    if let Some(ref u) = args.target_user {
+        cfg.filter.target_user = Some(u.clone());
+    }
+    cfg
 }
 
 fn parse_args() -> CmdArgs {
@@ -308,15 +315,12 @@ fn should_suppress(cpu: f32, rss_kb: u64) -> bool {
 fn main() {
     let args = parse_args();
 
-    let mut config = args
+    let config = args
         .config
         .as_deref()
         .and_then(load_config)
         .unwrap_or_default();
-
-    if let Some(user) = args.target_user {
-        config.filter.target_user = Some(user);
-    }
+    let config = merge_config(config, &args);
 
     if let Some(pid) = args.pid {
         if let Err(e) = attach_and_trace(pid) {
@@ -357,5 +361,30 @@ fn main() {
         states.retain(|pid, _| pids.contains(pid));
         println!();
         sleep(sleep_dur);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+    use std::fs;
+
+    #[test]
+    fn load_example_config() {
+        let cfg = load_config("ai_docs/example_config.toml").expect("load config");
+        assert_eq!(cfg.output.format.as_deref(), Some("json"));
+        assert_eq!(cfg.monitor.interval_sec, Some(60));
+        assert_eq!(cfg.filter.target_user.as_deref(), Some("myname"));
+    }
+
+    #[test]
+    fn cli_overrides_config() {
+        let tmp = NamedTempFile::new().expect("tmp");
+        fs::write(tmp.path(), "target_user = \"hoge\"").unwrap();
+        let cfg = load_config(tmp.path().to_str().unwrap()).expect("load config");
+        let args = CmdArgs { target_user: Some("foo".into()), ..Default::default() };
+        let merged = merge_config(cfg, &args);
+        assert_eq!(merged.filter.target_user.as_deref(), Some("foo"));
     }
 }
