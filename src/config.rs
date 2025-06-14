@@ -14,6 +14,9 @@ pub struct CmdArgs {
     /// User name filter
     #[arg(long)]
     pub target_user: Option<String>,
+    /// Output directory for logs
+    #[arg(short = 'o', long)]
+    pub output: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -28,6 +31,8 @@ pub struct FilterConfig {
 pub struct OutputConfig {
     #[serde(default)]
     pub format: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -70,6 +75,12 @@ pub fn merge_config(mut cfg: Config, args: &CmdArgs) -> Config {
     if let Some(ref u) = args.target_user {
         cfg.filter.target_user = Some(u.clone());
     }
+    if let Some(ref p) = args.output {
+        cfg.output.path = Some(p.clone());
+    }
+    if cfg.output.path.is_none() {
+        cfg.output.path = Some("/tmp/fuzmon".into());
+    }
     cfg
 }
 
@@ -87,6 +98,7 @@ mod tests {
     fn load_example_config() {
         let cfg = load_config("ai_docs/example_config.toml").expect("load config");
         assert_eq!(cfg.output.format.as_deref(), Some("json"));
+        assert_eq!(cfg.output.path.as_deref(), Some("/var/log/fuzmon/"));
         assert_eq!(cfg.monitor.interval_sec, Some(60));
         assert_eq!(cfg.filter.target_user.as_deref(), Some("myname"));
     }
@@ -94,11 +106,28 @@ mod tests {
     #[test]
     fn cli_overrides_config() {
         let tmp = NamedTempFile::new().expect("tmp");
-        fs::write(tmp.path(), "target_user = \"hoge\"").unwrap();
+        fs::write(
+            tmp.path(),
+            "target_user = \"hoge\"\n[output]\npath = \"/tmp/a\"",
+        )
+        .unwrap();
         let cfg = load_config(tmp.path().to_str().unwrap()).expect("load config");
-        let args = CmdArgs { target_user: Some("foo".into()), ..Default::default() };
+        let args = CmdArgs {
+            target_user: Some("foo".into()),
+            output: Some("/tmp/b".into()),
+            ..Default::default()
+        };
         let merged = merge_config(cfg, &args);
         assert_eq!(merged.filter.target_user.as_deref(), Some("foo"));
+        assert_eq!(merged.output.path.as_deref(), Some("/tmp/b"));
+    }
+
+    #[test]
+    fn default_output_path() {
+        let cfg = Config::default();
+        let args = CmdArgs::default();
+        let merged = merge_config(cfg, &args);
+        assert_eq!(merged.output.path.as_deref(), Some("/tmp/fuzmon"));
     }
 }
 
