@@ -25,7 +25,6 @@ fn parse_pid() -> Option<i32> {
 }
 
 struct ExeInfo {
-    base: u64,
     start: u64,
     end: u64,
 }
@@ -39,12 +38,12 @@ fn find_exe_info(pid: i32) -> Option<ExeInfo> {
             if let (Some(range), Some(perms), Some(offset)) = (parts.next(), parts.next(), parts.next()) {
                 if perms.starts_with('r') && perms.contains('x') {
                     if let Some((start, end)) = range.split_once('-') {
-                        if let (Ok(start_addr), Ok(end_addr), Ok(off)) = (
+                        if let (Ok(start_addr), Ok(end_addr), Ok(_off)) = (
                             u64::from_str_radix(start, 16),
                             u64::from_str_radix(end, 16),
                             u64::from_str_radix(offset, 16),
                         ) {
-                            return Some(ExeInfo { base: start_addr - off, start: start_addr, end: end_addr });
+                            return Some(ExeInfo { start: start_addr, end: end_addr });
                         }
                     }
                 }
@@ -65,9 +64,7 @@ fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64) -> Option<String> {
     if addr < info.start || addr >= info.end {
         return None;
     }
-    let probe = addr
-        .wrapping_sub(info.base)
-        .wrapping_add(loader.relative_address_base());
+    let probe = addr.wrapping_sub(loader.relative_address_base());
     let mut info = String::new();
     let mut found_frames = false;
     if let Ok(mut frames) = loader.find_frames(probe) {

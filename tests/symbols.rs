@@ -23,7 +23,15 @@ int main() {
 "#).expect("write src");
     let exe_path = dir.path().join("testprog");
     let status = Command::new("gcc")
-        .args(["-g", "-O0", "-fno-omit-frame-pointer", src_path.to_str().unwrap(), "-o", exe_path.to_str().unwrap()])
+        .args([
+            "-g",
+            "-O0",
+            "-fno-omit-frame-pointer",
+            "-no-pie",
+            src_path.to_str().unwrap(),
+            "-o",
+            exe_path.to_str().unwrap(),
+        ])
         .status()
         .expect("compile test program");
     assert!(status.success());
