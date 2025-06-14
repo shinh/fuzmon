@@ -69,12 +69,11 @@ fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64) -> Option<String> {
         .wrapping_sub(info.base)
         .wrapping_add(loader.relative_address_base());
     let mut info = String::new();
-    if let Some(sym) = loader.find_symbol(probe) {
-        info.push_str(sym);
-    }
+    let mut found_frames = false;
     if let Ok(mut frames) = loader.find_frames(probe) {
         let mut first = true;
         while let Ok(Some(frame)) = frames.next() {
+            found_frames = true;
             if !first {
                 info.push_str(" (inlined by) ");
             }
@@ -91,6 +90,11 @@ fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64) -> Option<String> {
                     info.push_str(&format!(" at {}:{}", file, line));
                 }
             }
+        }
+    }
+    if !found_frames {
+        if let Some(sym) = loader.find_symbol(probe) {
+            info.push_str(sym);
         }
     }
     if info.is_empty() { None } else { Some(info) }

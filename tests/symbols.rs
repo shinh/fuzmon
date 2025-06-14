@@ -46,5 +46,7 @@ int main() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("target_function"), "{}", stdout);
+    assert!(stdout.contains("main"), "{}", stdout);
+    assert!(stdout.contains("testprog.c"), "{}", stdout);
 }
 
