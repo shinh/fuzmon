@@ -21,4 +21,4 @@ jobs:
           timeout -k 3 ./target/debug/fuzmon > output.txt 2>&1 || true
           test -s output.txt
       - name: Test
-        run: sudo -E cargo test --verbose -- --nocapture
+        run: cargo test --verbose -- --nocapture
