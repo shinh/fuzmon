@@ -1,27 +1,110 @@
 use std::{env, fs, borrow::Cow, thread::sleep, time::Duration, collections::HashMap};
+use serde::Deserialize;
 use addr2line::Loader;
 use nix::sys::{ptrace, wait::waitpid};
 use nix::unistd::Pid;
+use std::os::unix::fs::MetadataExt;
 
-fn parse_pid() -> Option<i32> {
-    let mut args = env::args().skip(1);
-    while let Some(arg) = args.next() {
-        if arg == "-p" || arg == "--pid" {
-            if let Some(pid_str) = args.next() {
-                match pid_str.parse::<i32>() {
-                    Ok(p) => return Some(p),
-                    Err(_) => {
-                        eprintln!("Invalid PID: {}", pid_str);
-                        std::process::exit(1);
-                    }
+#[derive(Default)]
+struct CmdArgs {
+    pid: Option<i32>,
+    config: Option<String>,
+    target_user: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct FilterConfig {
+    #[serde(default)]
+    target_user: Option<String>,
+    #[serde(default)]
+    ignore_process_name: Option<Vec<String>>,
+}
+
+#[derive(Default, Deserialize)]
+struct OutputConfig {
+    #[serde(default)]
+    format: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct MonitorConfig {
+    #[serde(default)]
+    interval_sec: Option<u64>,
+}
+
+#[derive(Default, Deserialize)]
+struct Config {
+    #[serde(default)]
+    filter: FilterConfig,
+    #[serde(default)]
+    output: OutputConfig,
+    #[serde(default)]
+    monitor: MonitorConfig,
+}
+
+fn load_config(path: &str) -> Option<Config> {
+    let data = fs::read_to_string(path).ok()?;
+    toml::from_str(&data).ok()
+}
+
+fn uid_from_name(name: &str) -> Option<u32> {
+    let passwd = fs::read_to_string("/etc/passwd").ok()?;
+    for line in passwd.lines() {
+        let mut parts = line.split(':');
+        if let (Some(user), Some(_), Some(uid_str)) = (parts.next(), parts.next(), parts.next()) {
+            if user == name {
+                if let Ok(uid) = uid_str.parse::<u32>() {
+                    return Some(uid);
                 }
-            } else {
-                eprintln!("-p requires a PID argument");
-                std::process::exit(1);
             }
         }
     }
     None
+}
+
+fn pid_uid(pid: u32) -> Option<u32> {
+    fs::metadata(format!("/proc/{}", pid)).ok().map(|m| m.uid())
+}
+
+fn parse_args() -> CmdArgs {
+    let mut args = env::args().skip(1);
+    let mut out = CmdArgs::default();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-p" | "--pid" => {
+                if let Some(pid_str) = args.next() {
+                    out.pid = Some(pid_str.parse::<i32>().unwrap_or_else(|_| {
+                        eprintln!("Invalid PID: {}", pid_str);
+                        std::process::exit(1);
+                    }));
+                } else {
+                    eprintln!("-p requires a PID argument");
+                    std::process::exit(1);
+                }
+            }
+            "-c" | "--config" => {
+                if let Some(path) = args.next() {
+                    out.config = Some(path);
+                } else {
+                    eprintln!("-c requires a file path");
+                    std::process::exit(1);
+                }
+            }
+            "--target_user" => {
+                if let Some(val) = args.next() {
+                    out.target_user = Some(val);
+                } else {
+                    eprintln!("--target_user requires a value");
+                    std::process::exit(1);
+                }
+            }
+            _ => {
+                eprintln!("Unknown argument: {}", arg);
+                std::process::exit(1);
+            }
+        }
+    }
+    out
 }
 
 struct ExeInfo {
@@ -223,7 +306,19 @@ fn should_suppress(cpu: f32, rss_kb: u64) -> bool {
 }
 
 fn main() {
-    if let Some(pid) = parse_pid() {
+    let args = parse_args();
+
+    let mut config = args
+        .config
+        .as_deref()
+        .and_then(load_config)
+        .unwrap_or_default();
+
+    if let Some(user) = args.target_user {
+        config.filter.target_user = Some(user);
+    }
+
+    if let Some(pid) = args.pid {
         if let Err(e) = attach_and_trace(pid) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
@@ -231,9 +326,25 @@ fn main() {
         return;
     }
 
+    let target_uid = config
+        .filter
+        .target_user
+        .as_deref()
+        .and_then(uid_from_name);
+
+    let interval = config.monitor.interval_sec.unwrap_or(0);
+    let sleep_dur = if interval == 0 {
+        Duration::from_millis(200)
+    } else {
+        Duration::from_secs(interval)
+    };
+
     let mut states: HashMap<u32, ProcState> = HashMap::new();
     loop {
-        let pids = read_pids();
+        let mut pids = read_pids();
+        if let Some(uid) = target_uid {
+            pids.retain(|p| pid_uid(*p) == Some(uid));
+        }
         println!("Found {} PIDs", pids.len());
         for pid in &pids {
             let state = states.entry(*pid).or_default();
@@ -245,6 +356,6 @@ fn main() {
         }
         states.retain(|pid, _| pids.contains(pid));
         println!();
-        sleep(Duration::from_millis(200));
+        sleep(sleep_dur);
     }
 }
