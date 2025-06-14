@@ -16,3 +16,5 @@ jobs:
         run: |
           timeout -k 3 ./target/debug/fuzmon > output.txt 2>&1 || true
           test -s output.txt
+      - name: Test
+        run: cargo test --verbose -- --nocapture
