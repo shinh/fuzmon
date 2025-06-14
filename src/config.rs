@@ -78,6 +78,9 @@ pub fn merge_config(mut cfg: Config, args: &CmdArgs) -> Config {
     if let Some(ref p) = args.output {
         cfg.output.path = Some(p.clone());
     }
+    if cfg.output.path.is_none() {
+        cfg.output.path = Some("/tmp/fuzmon".into());
+    }
     cfg
 }
 
@@ -117,6 +120,14 @@ mod tests {
         let merged = merge_config(cfg, &args);
         assert_eq!(merged.filter.target_user.as_deref(), Some("foo"));
         assert_eq!(merged.output.path.as_deref(), Some("/tmp/b"));
+    }
+
+    #[test]
+    fn default_output_path() {
+        let cfg = Config::default();
+        let args = CmdArgs::default();
+        let merged = merge_config(cfg, &args);
+        assert_eq!(merged.output.path.as_deref(), Some("/tmp/fuzmon"));
     }
 }
 

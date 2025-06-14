@@ -1,21 +1,34 @@
 use std::{thread::sleep, time::Duration, collections::HashMap};
-use std::fs::{self, File};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use serde::Serialize;
+use chrono::{Utc, SecondsFormat};
 
 mod config;
 mod procinfo;
 mod stacktrace;
 
 use crate::config::{parse_args, load_config, merge_config, uid_from_name};
-use crate::procinfo::{read_pids, pid_uid, get_proc_usage, ProcState, should_suppress};
+use crate::procinfo::{
+    read_pids, pid_uid, get_proc_usage, ProcState, should_suppress, process_name,
+    proc_cpu_time_sec, vsz_kb, swap_kb,
+};
 use crate::stacktrace::{attach_and_trace, capture_stack_trace};
 
 #[derive(Serialize)]
+struct MemoryInfo {
+    rss_kb: u64,
+    vsz_kb: u64,
+    swap_kb: u64,
+}
+
+#[derive(Serialize)]
 struct LogEntry {
+    timestamp: String,
     pid: u32,
-    cpu: f32,
-    rss: u64,
+    process_name: String,
+    cpu_time_sec: f64,
+    memory: MemoryInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     stacktrace: Option<Vec<String>>,
 }
@@ -71,18 +84,26 @@ fn main() {
                 }
 
                 if let Some(dir) = output_dir {
-                    let mut entry = LogEntry { pid: *pid, cpu, rss, stacktrace: None };
+                    let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                    let mut entry = LogEntry {
+                        timestamp: ts,
+                        pid: *pid,
+                        process_name: process_name(*pid).unwrap_or_else(|| "?".into()),
+                        cpu_time_sec: proc_cpu_time_sec(*pid).unwrap_or(0.0),
+                        memory: MemoryInfo {
+                            rss_kb: rss,
+                            vsz_kb: vsz_kb(*pid).unwrap_or(0),
+                            swap_kb: swap_kb(*pid).unwrap_or(0),
+                        },
+                        stacktrace: None,
+                    };
                     if cpu < 1.0 {
                         if let Ok(trace) = capture_stack_trace(*pid as i32) {
                             entry.stacktrace = Some(trace);
                         }
                     }
-                    let ts = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    let path = format!("{}/{}_{}.json", dir.trim_end_matches('/'), pid, ts);
-                    if let Ok(mut file) = File::create(&path) {
+                    let path = format!("{}/{}.log", dir.trim_end_matches('/'), pid);
+                    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
                         let _ = serde_json::to_writer(&mut file, &entry);
                         let _ = file.write_all(b"\n");
                     }
