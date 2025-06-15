@@ -5,8 +5,6 @@ use std::{thread, time::Duration};
 use tempfile::tempdir;
 use zstd::stream;
 
-mod common;
-
 #[test]
 fn detect_fd_open_close() {
     let dir = tempdir().expect("tempdir");
@@ -36,7 +34,7 @@ sys.stdin.readline()
     let mut child_in = child.stdin.take().expect("stdin");
 
     let logdir = tempdir().expect("logdir");
-    let mut mon = common::fuzmon_cmd()
+    let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
         .args([
             "run",
             "-p",

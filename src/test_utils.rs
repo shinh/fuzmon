@@ -28,7 +28,7 @@ pub fn create_config(threshold: f64) -> NamedTempFile {
     cfg_file
 }
 
-pub fn run_fuzmon_and_check(bin: &str, pid: u32, log_dir: &TempDir, expected: &[&str]) {
+pub fn run_fuzmon(bin: &str, pid: u32, log_dir: &TempDir) -> String {
     let pid_s = pid.to_string();
 
     let cfg_file = create_config(0.0);
@@ -70,6 +70,12 @@ pub fn run_fuzmon_and_check(bin: &str, pid: u32, log_dir: &TempDir, expected: &[
             log_content.push_str(&s);
         }
     }
+
+    log_content
+}
+
+pub fn run_fuzmon_and_check(bin: &str, pid: u32, log_dir: &TempDir, expected: &[&str]) {
+    let log_content = run_fuzmon(bin, pid, log_dir);
 
     for e in expected {
         assert!(

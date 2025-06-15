@@ -1,5 +1,5 @@
-mod common;
 use std::fs;
+use std::process::Command;
 use tempfile::tempdir;
 
 #[test]
@@ -8,7 +8,7 @@ fn dump_outputs_entries() {
     let log_path = dir.path().join("1.jsonl");
     fs::write(&log_path, "{\"timestamp\":\"0\",\"pid\":1,\"process_name\":\"t\",\"cpu_time_sec\":0,\"memory\":{\"rss_kb\":0,\"vsz_kb\":0,\"swap_kb\":0}}\n").unwrap();
 
-    let out = common::fuzmon_cmd()
+    let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
         .args(["dump", log_path.to_str().unwrap()])
         .output()
         .expect("run fuzmon dump");
@@ -19,7 +19,7 @@ fn dump_outputs_entries() {
 
 #[test]
 fn help_subcommand_shows_usage() {
-    let out = common::fuzmon_cmd()
+    let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
         .arg("help")
         .output()
         .expect("run fuzmon help");
