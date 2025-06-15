@@ -6,6 +6,7 @@
 
 - Remove all compiler warnings
 - Use info! log for non-frequent events and use warn! for errors
+- Run `cargo fmt`
 
 ## Testing
 
