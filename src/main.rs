@@ -128,8 +128,14 @@ fn run(args: RunArgs) {
         Duration::from_secs(interval)
     };
 
-    let cpu_percent_threshold = config.monitor.cpu_time_percent_threshold.unwrap_or(1.0);
-    let stacktrace_threshold = config.monitor.stacktrace_percent_threshold.unwrap_or(1.0);
+    let cpu_percent_threshold = config
+        .monitor
+        .record_cpu_time_percent_threshold
+        .unwrap_or(1.0);
+    let stacktrace_threshold = config
+        .monitor
+        .stacktrace_cpu_time_percent_threshold
+        .unwrap_or(1.0);
 
     let term = Arc::new(AtomicBool::new(false));
     {
