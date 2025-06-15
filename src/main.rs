@@ -76,11 +76,15 @@ fn run(args: RunArgs) {
         .filter_map(|p| Regex::new(&p).ok())
         .collect();
 
-    let format = config.output.format.as_deref().unwrap_or("jsonl.zst");
-    let use_msgpack = matches!(
-        format,
-        "msgpack" | "msgpacks" | "msgpacks.zst" | "msgpack.zst"
-    );
+    let mut format = config.output.format.as_deref().unwrap_or("jsonl.zst");
+    format = match format {
+        "json" => "jsonl",
+        "json.zst" => "jsonl.zst",
+        "msgpack" => "msgpacks",
+        "msgpack.zst" => "msgpacks.zst",
+        other => other,
+    };
+    let use_msgpack = matches!(format, "msgpacks" | "msgpacks.zst");
     let compress = config
         .output
         .compress
