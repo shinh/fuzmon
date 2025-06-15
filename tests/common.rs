@@ -10,8 +10,11 @@ pub fn run_fuzmon_and_check(args: &[&str], expected: &[&str]) {
         .and_then(|i| args.get(i + 1))
         .expect("args must contain -o <dir>");
 
+    let mut cmd_args = vec!["run"];
+    cmd_args.extend_from_slice(args);
+
     let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
-        .args(args)
+        .args(&cmd_args)
         .stdout(Stdio::null())
         .spawn()
         .expect("run fuzmon");

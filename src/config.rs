@@ -1,10 +1,24 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use std::fs;
 
-#[derive(Parser, Default, Clone)]
+#[derive(Parser)]
 #[command(name = "fuzmon")]
-pub struct CmdArgs {
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Run the monitor
+    Run(RunArgs),
+    /// Dump logs
+    Dump,
+}
+
+#[derive(Parser, Default, Clone)]
+pub struct RunArgs {
     /// PID to trace
     #[arg(short, long)]
     pub pid: Option<i32>,
@@ -78,7 +92,7 @@ pub fn uid_from_name(name: &str) -> Option<u32> {
     None
 }
 
-pub fn merge_config(mut cfg: Config, args: &CmdArgs) -> Config {
+pub fn merge_config(mut cfg: Config, args: &RunArgs) -> Config {
     if let Some(ref u) = args.target_user {
         cfg.filter.target_user = Some(u.clone());
     }
@@ -97,8 +111,8 @@ pub fn merge_config(mut cfg: Config, args: &CmdArgs) -> Config {
     cfg
 }
 
-pub fn parse_args() -> CmdArgs {
-    CmdArgs::parse()
+pub fn parse_cli() -> Cli {
+    Cli::parse()
 }
 
 #[cfg(test)]
@@ -127,7 +141,7 @@ mod tests {
         )
         .unwrap();
         let cfg = load_config(tmp.path().to_str().unwrap()).expect("load config");
-        let args = CmdArgs {
+        let args = RunArgs {
             target_user: Some("foo".into()),
             output: Some("/tmp/b".into()),
             ..Default::default()
@@ -140,7 +154,7 @@ mod tests {
     #[test]
     fn default_output_path() {
         let cfg = Config::default();
-        let args = CmdArgs::default();
+        let args = RunArgs::default();
         let merged = merge_config(cfg, &args);
         assert_eq!(merged.output.path.as_deref(), Some("/tmp/fuzmon"));
         assert_eq!(merged.output.compress, Some(false));
