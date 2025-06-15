@@ -9,7 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::config::{ReportArgs, finalize_report_config, load_config};
-use crate::log::{LogEntry, read_log_entries};
+use crate::log::{Frame, LogEntry, read_log_entries};
 
 #[derive(Clone)]
 struct Stats {
@@ -169,7 +169,7 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
     sorted.sort_by_key(|e| e.timestamp.clone());
     let mut events = Vec::new();
     use std::collections::HashMap;
-    let mut active: HashMap<(u32, usize), (String, i64, u32)> = HashMap::new();
+    let mut active: HashMap<(u32, usize), (String, serde_json::Value, i64, u32)> = HashMap::new();
     for (i, e) in sorted.iter().enumerate() {
         if e.threads.is_empty() {
             continue;
@@ -180,12 +180,12 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
         let ts = dt.timestamp_micros();
 
         for t in &e.threads {
-            let mut frames: Vec<String> = Vec::new();
+            let mut frames: Vec<&Frame> = Vec::new();
             if let Some(st) = &t.stacktrace {
-                frames.extend(st.iter().cloned());
+                frames.extend(st.iter());
             }
             if let Some(py) = &t.python_stacktrace {
-                frames.extend(py.iter().cloned());
+                frames.extend(py.iter());
             }
             if frames.is_empty() {
                 continue;
@@ -194,7 +194,7 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
             let mut depth = frames.len();
             loop {
                 let key = (t.tid, depth);
-                if let Some((name, start, pid)) = active.remove(&key) {
+                if let Some((name, args, start, pid)) = active.remove(&key) {
                     let dur = ts - start;
                     events.push(json!({
                         "name": name,
@@ -203,6 +203,7 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
                         "tid": t.tid,
                         "ts": start,
                         "dur": if dur <= 0 { 1 } else { dur },
+                        "args": args,
                     }));
                     depth += 1;
                 } else {
@@ -210,11 +211,25 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
                 }
             }
 
-            for (idx, name) in frames.into_iter().enumerate() {
+            for (idx, frame) in frames.into_iter().enumerate() {
+                let name = if let Some(f) = &frame.func {
+                    f.clone()
+                } else if let Some(a) = frame.addr {
+                    format!("{:#x}", a)
+                } else {
+                    "?".to_string()
+                };
+                let args = json!({
+                    "addr": frame.addr,
+                    "file": frame.file,
+                    "line": frame.line,
+                });
                 let key = (t.tid, idx);
                 match active.get_mut(&key) {
-                    Some((cur, _start, _pid)) if cur == &name => {}
-                    Some((cur, start, pid)) => {
+                    Some((cur, cur_args, _start, _pid)) if cur == &name => {
+                        *cur_args = args;
+                    }
+                    Some((cur, cur_args, start, pid)) => {
                         let dur = ts - *start;
                         events.push(json!({
                             "name": cur,
@@ -223,13 +238,15 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
                             "tid": t.tid,
                             "ts": *start,
                             "dur": if dur <= 0 { 1 } else { dur },
+                            "args": cur_args.clone(),
                         }));
                         *cur = name;
+                        *cur_args = args;
                         *start = ts;
                         *pid = e.pid;
                     }
                     None => {
-                        active.insert(key, (name, ts, e.pid));
+                        active.insert(key, (name, args, ts, e.pid));
                     }
                 }
             }
@@ -237,7 +254,7 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
 
         if i == sorted.len() - 1 {
             let final_ts = ts;
-            for ((tid, _idx), (name, start, pid)) in active.drain() {
+            for ((tid, _idx), (name, args, start, pid)) in active.drain() {
                 let dur = final_ts - start;
                 events.push(json!({
                     "name": name,
@@ -246,6 +263,7 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
                     "tid": tid,
                     "ts": start,
                     "dur": if dur <= 0 { 1 } else { dur },
+                    "args": args,
                 }));
             }
         }

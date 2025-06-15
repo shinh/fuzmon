@@ -12,6 +12,8 @@ use std::io::Read;
 use std::rc::Rc;
 use std::time::SystemTime;
 
+use crate::log::Frame;
+
 struct CachedModule {
     module: Option<Rc<ModuleData>>,
     mtime: Option<SystemTime>,
@@ -192,7 +194,7 @@ pub fn load_loaders(pid: i32) -> Vec<Module> {
     modules
 }
 
-fn describe_addr(loader: &Rc<Loader>, info: &ExeInfo, addr: u64, is_pic: bool) -> Option<String> {
+fn describe_addr(loader: &Rc<Loader>, info: &ExeInfo, addr: u64, is_pic: bool) -> Option<Frame> {
     if addr < info.start || addr >= info.end {
         return None;
     }
@@ -201,40 +203,40 @@ fn describe_addr(loader: &Rc<Loader>, info: &ExeInfo, addr: u64, is_pic: bool) -
         probe = addr.wrapping_sub(info.start).wrapping_add(info.offset);
     }
     probe = probe.wrapping_sub(loader.relative_address_base());
-    let mut info_str = String::new();
+
+    let mut func = None;
+    let mut file = None;
+    let mut line = None;
     let mut found_frames = false;
     if let Ok(mut frames) = loader.find_frames(probe) {
-        let mut first = true;
         while let Ok(Some(frame)) = frames.next() {
             found_frames = true;
-            if !first {
-                info_str.push_str(" (inlined by) ");
-            }
-            first = false;
-            if let Some(func) = frame.function {
-                if !info_str.is_empty() {
-                    info_str.push(' ');
+            if func.is_none() {
+                if let Some(f) = &frame.function {
+                    func = Some(f.demangle().unwrap_or_else(|_| Cow::from("??")).into());
                 }
-                let name = func.demangle().unwrap_or_else(|_| Cow::from("??"));
-                info_str.push_str(&name);
             }
             if let Some(loc) = frame.location {
-                if let (Some(file), Some(line)) = (loc.file, loc.line) {
-                    info_str.push_str(&format!(" at {}:{}", file, line));
+                if file.is_none() {
+                    file = loc.file.map(|s| s.to_string());
+                }
+                if line.is_none() {
+                    line = loc.line.map(|l| l as i32);
                 }
             }
         }
     }
     if !found_frames {
         if let Some(sym) = loader.find_symbol(probe) {
-            info_str.push_str(sym);
+            func = Some(sym.to_string());
         }
     }
-    if info_str.is_empty() {
-        None
-    } else {
-        Some(info_str)
-    }
+    Some(Frame {
+        addr: Some(addr as i64),
+        func,
+        file,
+        line,
+    })
 }
 
 fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
@@ -259,7 +261,7 @@ fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
     Ok(addrs)
 }
 
-pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
+pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<Frame>> {
     let target = Pid::from_raw(pid);
     ptrace::attach(target)?;
     waitpid(target, None)?;
@@ -267,18 +269,26 @@ pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
     let res = (|| {
         let stack = get_stack_trace(target, 32)?;
         let modules = load_loaders(pid);
-        let mut lines = Vec::new();
-        for (i, addr) in stack.iter().enumerate() {
-            let mut line = format!("{:>2}: {:#x}", i, addr);
+        let mut frames = Vec::new();
+        for addr in stack {
+            let mut added = false;
             for m in &modules {
-                if let Some(info) = describe_addr(&m.loader, &m.info, *addr, m.is_pic) {
-                    line = format!("{:>2}: {:#x} {}", i, addr, info);
+                if let Some(info) = describe_addr(&m.loader, &m.info, addr, m.is_pic) {
+                    frames.push(info);
+                    added = true;
                     break;
                 }
             }
-            lines.push(line);
+            if !added {
+                frames.push(Frame {
+                    addr: Some(addr as i64),
+                    func: None,
+                    file: None,
+                    line: None,
+                });
+            }
         }
-        Ok(lines)
+        Ok(frames)
     })();
 
     if let Err(e) = ptrace::detach(target, None) {
@@ -287,7 +297,7 @@ pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
     res
 }
 
-pub fn capture_c_stack_traces(pid: i32) -> Vec<(i32, Option<Vec<String>>)> {
+pub fn capture_c_stack_traces(pid: i32) -> Vec<(i32, Option<Vec<Frame>>)> {
     let mut tids: Vec<i32> = match fs::read_dir(format!("/proc/{}/task", pid)) {
         Ok(d) => d
             .filter_map(|e| e.ok())
@@ -309,18 +319,23 @@ pub fn capture_c_stack_traces(pid: i32) -> Vec<(i32, Option<Vec<String>>)> {
 
 pub fn capture_python_stack_traces(
     pid: i32,
-) -> Result<HashMap<u32, Vec<String>>, Box<dyn std::error::Error>> {
+) -> Result<HashMap<u32, Vec<Frame>>, Box<dyn std::error::Error>> {
     let config = PySpyConfig::default();
     let mut spy = PythonSpy::new(pid as py_spy::Pid, &config)?;
     let traces = spy.get_stack_traces()?;
     let mut result = HashMap::new();
     for t in traces {
         if let Some(tid) = t.os_thread_id {
-            let mut lines = Vec::new();
+            let mut frames = Vec::new();
             for f in t.frames {
-                lines.push(format!("{} {}:{}", f.name, f.filename, f.line));
+                frames.push(Frame {
+                    addr: None,
+                    func: Some(f.name),
+                    file: Some(f.filename),
+                    line: Some(f.line as i32),
+                });
             }
-            result.insert(tid as u32, lines);
+            result.insert(tid as u32, frames);
         }
     }
     Ok(result)
