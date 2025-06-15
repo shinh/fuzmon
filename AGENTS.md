@@ -11,7 +11,3 @@
 - Add appropriate tests
 - Get `cargo test` pass
 - Never add sleep
-
-## Guide
-
-- Check `ai_docs/DESIGN.md` for a rough idea of the final design
