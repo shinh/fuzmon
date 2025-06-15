@@ -1,7 +1,19 @@
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
 use std::fs;
+use std::path::PathBuf;
 use zstd::stream;
+
+pub fn wait_until_file_appears(path: std::path::PathBuf) {
+    let timeout = Duration::from_secs(5);
+    let start = std::time::Instant::now();
+    while !path.exists() {
+        if start.elapsed() > timeout {
+            panic!("Timeout waiting for file to appear: {}", path.display());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
 
 #[allow(dead_code)]
 pub fn run_fuzmon_and_check(args: &[&str], expected: &[&str]) {
