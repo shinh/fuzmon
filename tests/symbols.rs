@@ -65,7 +65,9 @@ int main() {
     let logdir = tempdir().expect("logdir");
     common::run_fuzmon_and_check(pid, &logdir, expected);
 
-    let _ = child.kill();
+    unsafe {
+        let _ = nix::libc::kill(child.id() as i32, nix::libc::SIGINT);
+    }
     let _ = child.wait();
 }
 

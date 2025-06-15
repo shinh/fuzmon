@@ -51,7 +51,9 @@ if __name__ == '__main__':
         .expect("run fuzmon");
 
     common::wait_until_file_appears(&logdir, pid);
-    let _ = mon.kill();
+    unsafe {
+        let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
+    }
     let _ = mon.wait();
 
     child_in.write_all(b"\n").unwrap();

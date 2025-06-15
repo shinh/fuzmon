@@ -46,10 +46,14 @@ fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         .expect("run fuzmon");
 
     common::wait_until_file_appears(&logdir, pid);
-    let _ = mon.kill();
+    unsafe {
+        let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
+    }
     let _ = mon.wait();
 
-    let _ = child.kill();
+    unsafe {
+        let _ = nix::libc::kill(child.id() as i32, nix::libc::SIGINT);
+    }
     let _ = child.wait();
 
     let path = fs::read_dir(logdir.path())
@@ -84,10 +88,14 @@ fn run_default() -> (tempfile::TempDir, std::path::PathBuf) {
         .expect("run fuzmon");
 
     common::wait_until_file_appears(&logdir, pid);
-    let _ = mon.kill();
+    unsafe {
+        let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
+    }
     let _ = mon.wait();
 
-    let _ = child.kill();
+    unsafe {
+        let _ = nix::libc::kill(child.id() as i32, nix::libc::SIGINT);
+    }
     let _ = child.wait();
 
     let path = fs::read_dir(logdir.path())

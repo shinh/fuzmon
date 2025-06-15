@@ -107,7 +107,9 @@ sys.stdin.readline()
     drop(child_in);
 
     let _ = child.wait();
-    let _ = mon.kill();
+    unsafe {
+        let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
+    }
     let _ = mon.wait();
 
     let path = if plain.exists() { &plain } else { &zst };
