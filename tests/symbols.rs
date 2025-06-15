@@ -47,7 +47,7 @@ int main() {
     let logdir = tempdir().expect("logdir");
     common::run_fuzmon_and_check(
         &["-p", &pid.to_string(), "-o", logdir.path().to_str().unwrap()],
-        &["target_function", "main", "testprog.c"],
+        &["target_function", "main", "sleep", "testprog.c"],
     );
 
     let _ = child.kill();
@@ -98,7 +98,7 @@ int main() {
     let logdir = tempdir().expect("logdir");
     common::run_fuzmon_and_check(
         &["-p", &pid.to_string(), "-o", logdir.path().to_str().unwrap()],
-        &["target_function", "main", "testprog.c"],
+        &["target_function", "main", "sleep", "testprog.c"],
     );
 
     let _ = child.kill();
