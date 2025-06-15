@@ -74,7 +74,6 @@ fn run_default() -> (tempfile::TempDir, std::path::PathBuf) {
         .spawn()
         .expect("spawn python");
 
-    thread::sleep(Duration::from_millis(200));
     let pid = child.id();
 
     let pid_s = pid.to_string();
