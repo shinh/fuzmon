@@ -1,9 +1,10 @@
+mod common;
+use fuzmon::test_utils::{create_config, wait_until_file_appears};
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
 use tempfile::tempdir;
-mod common;
 
 #[test]
 fn python_stack_trace_contains_functions() {
@@ -38,9 +39,9 @@ if __name__ == '__main__':
     let pid = child.id();
 
     let logdir = tempdir().expect("logdir");
-    let cfg_file = common::create_config(0.0);
+    let cfg_file = create_config(0.0);
 
-    let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+    let mut mon = common::fuzmon_cmd()
         .args([
             "run",
             "-p",
@@ -54,7 +55,7 @@ if __name__ == '__main__':
         .spawn()
         .expect("run fuzmon");
 
-    common::wait_until_file_appears(&logdir, pid);
+    wait_until_file_appears(&logdir, pid);
     unsafe {
         let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
     }

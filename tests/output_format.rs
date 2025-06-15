@@ -3,6 +3,7 @@ use std::process::{Command, Stdio};
 use tempfile::{NamedTempFile, tempdir};
 
 mod common;
+use fuzmon::test_utils::wait_until_file_appears;
 
 fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let logdir = tempdir().expect("logdir");
@@ -37,13 +38,13 @@ fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let cfg_path = cfg_file.path().to_str().unwrap().to_string();
     let logdir_s = logdir.path().to_str().unwrap().to_string();
     let cmd_args = vec!["run", "-p", &pid_s, "-o", &logdir_s, "-c", &cfg_path];
-    let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+    let mut mon = common::fuzmon_cmd()
         .args(&cmd_args)
         .stdout(Stdio::null())
         .spawn()
         .expect("run fuzmon");
 
-    common::wait_until_file_appears(&logdir, pid);
+    wait_until_file_appears(&logdir, pid);
     unsafe {
         let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
     }
@@ -78,13 +79,13 @@ fn run_default() -> (tempfile::TempDir, std::path::PathBuf) {
     let pid_s = pid.to_string();
     let logdir_s = logdir.path().to_str().unwrap().to_string();
     let cmd_args = vec!["run", "-p", &pid_s, "-o", &logdir_s];
-    let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+    let mut mon = common::fuzmon_cmd()
         .args(&cmd_args)
         .stdout(Stdio::null())
         .spawn()
         .expect("run fuzmon");
 
-    common::wait_until_file_appears(&logdir, pid);
+    wait_until_file_appears(&logdir, pid);
     unsafe {
         let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
     }
@@ -105,7 +106,7 @@ fn run_default() -> (tempfile::TempDir, std::path::PathBuf) {
 }
 
 fn dump_file(path: &std::path::Path) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+    let out = common::fuzmon_cmd()
         .args(["dump", path.to_str().unwrap()])
         .output()
         .expect("run dump");

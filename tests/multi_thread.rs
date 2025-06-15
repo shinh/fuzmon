@@ -1,10 +1,11 @@
+mod common;
+use fuzmon::test_utils::create_config;
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
 use tempfile::tempdir;
-mod common;
 
 #[test]
 fn multi_thread_stacktrace_has_multiple_entries() {
@@ -73,9 +74,9 @@ int main() {
     let pid = child.id();
 
     let logdir = tempdir().expect("logdir");
-    let cfg_file = common::create_config(0.0);
+    let cfg_file = create_config(0.0);
 
-    let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+    let mut mon = common::fuzmon_cmd()
         .args([
             "run",
             "-p",
