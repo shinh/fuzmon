@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::time::SystemTime;
 
 struct CachedLoader {
-    loader: Rc<Loader>,
+    loader: Option<Rc<Loader>>,
     mtime: Option<SystemTime>,
 }
 
@@ -24,12 +24,19 @@ fn get_loader(path: &str) -> Option<Rc<Loader>> {
     if path.starts_with("[") {
         return None;
     }
-    let mtime = fs::metadata(path).and_then(|m| m.modified()).ok();
+    let meta = match fs::metadata(path) {
+        Ok(m) => m,
+        Err(_) => return None,
+    };
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let mtime = meta.modified().ok();
     LOADER_CACHE.with(|cache| {
         let mut map = cache.borrow_mut();
         if let Some(entry) = map.get(path) {
             if entry.mtime == mtime {
-                return Some(entry.loader.clone());
+                return entry.loader.clone();
             }
             map.remove(path);
         }
@@ -40,7 +47,7 @@ fn get_loader(path: &str) -> Option<Rc<Loader>> {
                 map.insert(
                     path.to_string(),
                     CachedLoader {
-                        loader: rc.clone(),
+                        loader: Some(rc.clone()),
                         mtime,
                     },
                 );
@@ -48,6 +55,10 @@ fn get_loader(path: &str) -> Option<Rc<Loader>> {
             }
             Err(e) => {
                 warn!("Loader::new {} failed: {}", path, e);
+                map.insert(
+                    path.to_string(),
+                    CachedLoader { loader: None, mtime },
+                );
                 None
             }
         }
@@ -268,4 +279,47 @@ pub fn capture_python_stack_traces(
         result.push(Some(lines));
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+    use tempfile::tempdir;
+
+    fn clear_cache() {
+        LOADER_CACHE.with(|c| c.borrow_mut().clear());
+    }
+
+    #[test]
+    fn loader_none_for_nonexistent() {
+        clear_cache();
+        assert!(get_loader("/no/such/file").is_none());
+    }
+
+    #[test]
+    fn loader_none_for_non_regular() {
+        clear_cache();
+        assert!(get_loader("/dev/null").is_none());
+    }
+
+    #[test]
+    fn loader_retry_after_update() {
+        clear_cache();
+        let dir = tempdir().unwrap();
+        let exe = dir.path().join("tprog");
+        std::fs::write(&exe, b"bad").unwrap();
+        assert!(get_loader(exe.to_str().unwrap()).is_none());
+        assert!(get_loader(exe.to_str().unwrap()).is_none());
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let src = dir.path().join("t.c");
+        std::fs::write(&src, "int main(){return 0;}").unwrap();
+        let status = Command::new("gcc")
+            .args([src.to_str().unwrap(), "-o", exe.to_str().unwrap()])
+            .status()
+            .expect("compile");
+        assert!(status.success());
+        assert!(get_loader(exe.to_str().unwrap()).is_some());
+    }
 }
