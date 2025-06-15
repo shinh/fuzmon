@@ -26,15 +26,27 @@ fn html_report_has_stats() {
     }
     let _ = child.wait();
 
+    let outdir = tempdir().expect("outdir");
     let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
-        .args(["report", log_path.to_str().unwrap()])
+        .args([
+            "report",
+            log_path.to_str().unwrap(),
+            "-o",
+            outdir.path().to_str().unwrap(),
+        ])
         .output()
         .expect("run report");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Total runtime: 10"), "{}", stdout);
-    assert!(stdout.contains("Total CPU time"), "{}", stdout);
-    assert!(stdout.contains("2000"), "{}", stdout);
-    assert!(stdout.contains("REPORT_VAR"), "{}", stdout);
+    assert!(
+        stdout.contains(outdir.path().to_str().unwrap()),
+        "{}",
+        stdout
+    );
+    let html = fs::read_to_string(outdir.path().join("index.html")).unwrap();
+    assert!(html.contains("Total runtime: 10"), "{}", html);
+    assert!(html.contains("Total CPU time"), "{}", html);
+    assert!(html.contains("2000"), "{}", html);
+    assert!(html.contains("REPORT_VAR"), "{}", html);
 }
 
 #[test]
@@ -56,17 +68,28 @@ fn html_report_directory() {
     let cfg = NamedTempFile::new().expect("cfg");
     fs::write(cfg.path(), "[report]\ntop_cpu=1\ntop_rss=1\n").unwrap();
 
+    let outdir = tempdir().expect("outdir");
     let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
         .args([
             "report",
             dir.path().to_str().unwrap(),
             "-c",
             cfg.path().to_str().unwrap(),
+            "-o",
+            outdir.path().to_str().unwrap(),
         ])
         .output()
         .expect("run report dir");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let pos1 = stdout.find("1111").expect("1111");
-    let pos2 = stdout.find("2222").expect("2222");
-    assert!(pos1 < pos2, "order: {}", stdout);
+    assert!(
+        stdout.contains(outdir.path().to_str().unwrap()),
+        "{}",
+        stdout
+    );
+    let html = fs::read_to_string(outdir.path().join("index.html")).unwrap();
+    let pos1 = html.find("1111").expect("1111");
+    let pos2 = html.find("2222").expect("2222");
+    assert!(pos1 < pos2, "order: {}", html);
+    assert!(outdir.path().join("1111.html").exists());
+    assert!(outdir.path().join("2222.html").exists());
 }

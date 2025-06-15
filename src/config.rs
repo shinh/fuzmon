@@ -33,6 +33,9 @@ pub struct ReportArgs {
     /// Path to configuration file
     #[arg(short = 'c', long)]
     pub config: Option<String>,
+    /// Output directory for HTML report
+    #[arg(short = 'o', long)]
+    pub output: Option<String>,
 }
 
 #[derive(Parser, Default, Clone)]
