@@ -4,6 +4,7 @@
 - Use info! log for non-frequent events and use warn! for errors
 - Avoid code duplication by adding helper functions
 - Run `cargo fmt`
+- Never use `allow(dead_code)`
 
 ## Testing
 
