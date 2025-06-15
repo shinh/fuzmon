@@ -127,20 +127,23 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
     let root = SVGBackend::new(out, (600, 300)).into_drawing_area();
     root.fill(&WHITE)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    let y_desc = match field {
-        GraphField::Cpu => "CPU %",
-        GraphField::Rss => "RSS KB",
+    let (y_desc, caption, scale) = match field {
+        GraphField::Cpu => ("CPU %", "CPU usage (%)", 1.0),
+        GraphField::Rss => {
+            if max_val >= 1024.0 * 1024.0 {
+                ("RSS GB", "Resident set size (GB)", 1024.0 * 1024.0)
+            } else {
+                ("RSS MB", "Resident set size (MB)", 1024.0)
+            }
+        }
     };
-    let caption = match field {
-        GraphField::Cpu => "CPU usage (%)",
-        GraphField::Rss => "Resident set size (KB)",
-    };
+    let y_max = (max_val / scale).max(1.0);
     let mut chart = ChartBuilder::on(&root)
         .caption(caption, ("sans-serif", 20))
         .margin(5)
         .x_label_area_size(30)
         .y_label_area_size(40)
-        .build_cartesian_2d(0f64..x_max, 0f64..max_val)
+        .build_cartesian_2d(0f64..x_max, 0f64..y_max)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     chart
         .configure_mesh()
@@ -149,7 +152,10 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
         .draw()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     chart
-        .draw_series(LineSeries::new(series, &BLUE))
+        .draw_series(LineSeries::new(
+            series.into_iter().map(|(x, v)| (x, v / scale)),
+            &BLUE,
+        ))
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     root.present()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
