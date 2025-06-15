@@ -1,3 +1,9 @@
+use std::{thread::sleep, time::Duration, collections::{HashMap, HashSet}};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write, BufRead, BufReader};
+use std::path::Path;
+use serde::{Serialize, Deserialize};
+use regex::Regex;
 use chrono::Utc;
 use regex::Regex;
 use rmp_serde::decode::{Error as MsgpackError, from_read as read_msgpack};
@@ -7,6 +13,8 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 use std::{collections::HashMap, thread::sleep, time::Duration};
+use log::{info, warn};
+use rmp_serde::decode::{from_read as read_msgpack, Error as MsgpackError};
 
 mod config;
 mod procinfo;
@@ -48,6 +56,7 @@ struct FdLogEvent {
 }
 
 fn main() {
+    env_logger::init();
     let cli = parse_cli();
     if let Some(cmd) = cli.command {
         match cmd {
@@ -93,7 +102,9 @@ fn run(args: RunArgs) {
 
     let output_dir = config.output.path.as_deref();
     if let Some(dir) = output_dir {
-        let _ = fs::create_dir_all(dir);
+        if let Err(e) = fs::create_dir_all(dir) {
+            warn!("failed to create {}: {}", dir, e);
+        }
     }
 
     let target_pid = args.pid.map(|p| p as u32);
@@ -149,11 +160,23 @@ fn monitor_iteration(
     if verbose {
         println!("Found {} PIDs", pids.len());
     }
+    let existing: Vec<u32> = states.keys().copied().collect();
+    let pid_set: HashSet<u32> = pids.iter().copied().collect();
+    for old in &existing {
+        if !pid_set.contains(old) {
+            states.remove(old);
+            info!("process {} disappeared", old);
+        }
+    }
     for pid in &pids {
         if should_skip_pid(*pid, target_pid, ignore_patterns, cpu_jiffies_threshold) {
             continue;
         }
+        let is_new = !states.contains_key(pid);
         let state = states.entry(*pid).or_default();
+        if is_new {
+            info!("new process {}", pid);
+        }
         let raw_events = detect_fd_events(*pid, state);
         state.pending_fd_events.extend(raw_events);
         if let Some((cpu, rss)) = get_proc_usage(*pid, state) {
@@ -194,7 +217,6 @@ fn monitor_iteration(
             }
         }
     }
-    states.retain(|pid, _| pids.contains(pid));
 }
 
 fn should_skip_pid(
@@ -239,14 +261,19 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
         if name.starts_with("python") {
             match capture_python_stack_trace(pid as i32) {
                 Ok(t) => entry.stacktrace = Some(t),
-                Err(_) => {
-                    if let Ok(t) = capture_stack_trace(pid as i32) {
-                        entry.stacktrace = Some(t);
+                Err(e) => {
+                    warn!("python trace failed: {}", e);
+                    match capture_stack_trace(pid as i32) {
+                        Ok(t) => entry.stacktrace = Some(t),
+                        Err(e) => warn!("stack trace failed: {}", e),
                     }
                 }
             }
-        } else if let Ok(trace) = capture_stack_trace(pid as i32) {
-            entry.stacktrace = Some(trace);
+        } else {
+            match capture_stack_trace(pid as i32) {
+                Ok(trace) => entry.stacktrace = Some(trace),
+                Err(e) => warn!("stack trace failed: {}", e),
+            }
         }
     }
     entry
@@ -255,33 +282,50 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
 fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
     let ext = if use_msgpack { "msgpacks" } else { "jsonl" };
     let base = format!("{}/{}.{}", dir.trim_end_matches('/'), entry.pid, ext);
-    let path = if compress {
-        format!("{}.zst", base)
-    } else {
-        base
-    };
-    if let Ok(file) = OpenOptions::new().create(true).append(true).open(&path) {
-        if compress {
-            if let Ok(mut enc) = zstd::Encoder::new(file, 0) {
-                if use_msgpack {
-                    let _ = write_named(&mut enc, entry);
-                } else {
-                    let _ = serde_json::to_writer(&mut enc, entry);
-                    let _ = enc.write_all(b"\n");
+    let path = if compress { format!("{}.zst", base) } else { base };
+    match OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(file) => {
+            if compress {
+                match zstd::Encoder::new(file, 0) {
+                    Ok(mut enc) => {
+                        if use_msgpack {
+                            if let Err(e) = write_named(&mut enc, entry) {
+                                warn!("write msgpack failed: {}", e);
+                            }
+                        } else {
+                            if serde_json::to_writer(&mut enc, entry).is_err() {
+                                warn!("write json failed");
+                            }
+                            if enc.write_all(b"\n").is_err() {
+                                warn!("write newline failed");
+                            }
+                        }
+                        if let Err(e) = enc.finish() {
+                            warn!("finish zstd failed: {}", e);
+                        }
+                    }
+                    Err(e) => warn!("zstd init failed: {}", e),
                 }
-                let _ = enc.finish();
-            }
-        } else {
-            let mut file = file;
-            if use_msgpack {
-                let _ = write_named(&mut file, entry);
             } else {
-                let _ = serde_json::to_writer(&mut file, entry);
-                let _ = file.write_all(b"\n");
+                let mut file = file;
+                if use_msgpack {
+                    if let Err(e) = write_named(&mut file, entry) {
+                        warn!("write msgpack failed: {}", e);
+                    }
+                } else {
+                    if serde_json::to_writer(&mut file, entry).is_err() {
+                        warn!("write json failed");
+                    }
+                    if file.write_all(b"\n").is_err() {
+                        warn!("write newline failed");
+                    }
+                }
             }
         }
+        Err(e) => warn!("open {} failed: {}", path, e),
     }
 }
+
 
 fn read_log_entries(path: &Path) -> io::Result<Vec<LogEntry>> {
     let file = fs::File::open(path)?;
