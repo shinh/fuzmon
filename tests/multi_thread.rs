@@ -107,9 +107,9 @@ int main() {
     };
     let line = log.lines().next().expect("line");
     let entry: Value = serde_json::from_str(line).expect("json");
-    let stack = entry
-        .get("stacktrace")
+    let threads = entry
+        .get("threads")
         .and_then(|v| v.as_array())
         .expect("array");
-    assert!(stack.len() >= 2, "len {}", stack.len());
+    assert!(threads.len() >= 2, "len {}", threads.len());
 }

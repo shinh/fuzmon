@@ -244,7 +244,7 @@ pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
     res
 }
 
-pub fn capture_stack_traces(pid: i32) -> Vec<Option<Vec<String>>> {
+pub fn capture_c_stack_traces(pid: i32) -> Vec<(i32, Option<Vec<String>>)> {
     let mut tids: Vec<i32> = match fs::read_dir(format!("/proc/{}/task", pid)) {
         Ok(d) => d
             .filter_map(|e| e.ok())
@@ -257,8 +257,8 @@ pub fn capture_stack_traces(pid: i32) -> Vec<Option<Vec<String>>> {
     let mut traces = Vec::new();
     for tid in tids {
         match capture_stack_trace(tid) {
-            Ok(t) => traces.push(Some(t)),
-            Err(_) => traces.push(None),
+            Ok(t) => traces.push((tid, Some(t))),
+            Err(_) => traces.push((tid, None)),
         }
     }
     traces
@@ -266,17 +266,19 @@ pub fn capture_stack_traces(pid: i32) -> Vec<Option<Vec<String>>> {
 
 pub fn capture_python_stack_traces(
     pid: i32,
-) -> Result<Vec<Option<Vec<String>>>, Box<dyn std::error::Error>> {
+) -> Result<HashMap<u32, Vec<String>>, Box<dyn std::error::Error>> {
     let config = PySpyConfig::default();
     let mut spy = PythonSpy::new(pid as py_spy::Pid, &config)?;
     let traces = spy.get_stack_traces()?;
-    let mut result = Vec::new();
+    let mut result = HashMap::new();
     for t in traces {
-        let mut lines = Vec::new();
-        for f in t.frames {
-            lines.push(format!("{} {}:{}", f.name, f.filename, f.line));
+        if let Some(tid) = t.os_thread_id {
+            let mut lines = Vec::new();
+            for f in t.frames {
+                lines.push(format!("{} {}:{}", f.name, f.filename, f.line));
+            }
+            result.insert(tid as u32, lines);
         }
-        result.push(Some(lines));
     }
     Ok(result)
 }
