@@ -45,6 +45,7 @@ fn html_report_has_stats() {
     let html = fs::read_to_string(outdir.path().join("index.html")).unwrap();
     assert!(html.contains("Total runtime: 10"), "{}", html);
     assert!(html.contains("Total CPU time"), "{}", html);
+    assert!(html.contains("Average CPU usage"), "{}", html);
     assert!(html.contains("2000"), "{}", html);
     assert!(html.contains("REPORT_VAR"), "{}", html);
 }

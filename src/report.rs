@@ -15,6 +15,7 @@ struct Stats {
     env: Option<String>,
     runtime: i64,
     cpu: f64,
+    avg_cpu: f64,
     peak_rss: u64,
     path: String,
 }
@@ -53,12 +54,18 @@ fn calc_stats(path: &Path, entries: &[LogEntry]) -> Option<Stats> {
     for e in &sorted {
         peak_rss = peak_rss.max(e.memory.rss_kb);
     }
+    let avg_cpu = if runtime > 0 {
+        cpu * 100.0 / runtime as f64
+    } else {
+        0.0
+    };
     Some(Stats {
         pid,
         cmd,
         env,
         runtime,
         cpu,
+        avg_cpu,
         peak_rss,
         path: path.display().to_string(),
     })
@@ -85,6 +92,7 @@ fn render_single(s: &Stats) -> String {
     out.push_str("<ul>\n");
     out.push_str(&format!("<li>Total runtime: {} sec</li>\n", s.runtime));
     out.push_str(&format!("<li>Total CPU time: {:.1} sec</li>\n", s.cpu));
+    out.push_str(&format!("<li>Average CPU usage: {:.1}%</li>\n", s.avg_cpu));
     out.push_str(&format!("<li>Peak RSS: {} KB</li>\n", s.peak_rss));
     out.push_str("</ul>\n");
     if let Some(e) = &s.env {
@@ -106,7 +114,7 @@ fn render_index(stats: &[Stats], link: bool) -> String {
     out.push_str("<html><body>\n");
     out.push_str("<table>\n");
     out.push_str(
-        "<tr><th>PID</th><th>Command</th><th>Total runtime</th><th>Total CPU time</th><th>Peak RSS</th></tr>\n",
+        "<tr><th>PID</th><th>Command</th><th>Total runtime</th><th>Total CPU time</th><th>Avg CPU (%)</th><th>Peak RSS</th></tr>\n",
     );
     for s in stats {
         let pid_cell = if link {
@@ -115,11 +123,12 @@ fn render_index(stats: &[Stats], link: bool) -> String {
             s.pid.to_string()
         };
         out.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{}</td></tr>\n",
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{:.1}</td><td>{}</td></tr>\n",
             pid_cell,
             encode_text(&s.cmd),
             s.runtime,
             s.cpu,
+            s.avg_cpu,
             s.peak_rss
         ));
     }
@@ -170,7 +179,14 @@ fn report_dir(path: &Path, out_dir: &Path, top_cpu: usize, top_rss: usize) {
     }
 
     let mut by_cpu = stats.clone();
-    by_cpu.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap());
+    by_cpu.sort_by(|a, b| {
+        let a_cpu = if a.avg_cpu <= 0.1 { 0.0 } else { a.avg_cpu };
+        let b_cpu = if b.avg_cpu <= 0.1 { 0.0 } else { b.avg_cpu };
+        b_cpu
+            .partial_cmp(&a_cpu)
+            .unwrap()
+            .then_with(|| b.peak_rss.cmp(&a.peak_rss))
+    });
     let mut by_rss = stats.clone();
     by_rss.sort_by_key(|s| std::cmp::Reverse(s.peak_rss));
 
@@ -182,7 +198,14 @@ fn report_dir(path: &Path, out_dir: &Path, top_cpu: usize, top_rss: usize) {
         map.entry(s.path.clone()).or_insert(s);
     }
     let mut selected: Vec<_> = map.into_values().collect();
-    selected.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap());
+    selected.sort_by(|a, b| {
+        let a_cpu = if a.avg_cpu <= 0.1 { 0.0 } else { a.avg_cpu };
+        let b_cpu = if b.avg_cpu <= 0.1 { 0.0 } else { b.avg_cpu };
+        b_cpu
+            .partial_cmp(&a_cpu)
+            .unwrap()
+            .then_with(|| b.peak_rss.cmp(&a.peak_rss))
+    });
 
     // write index.html
     let index_html = render_index(&selected, true);
