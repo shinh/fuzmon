@@ -5,8 +5,6 @@ use std::{thread, time::Duration};
 use tempfile::tempdir;
 use zstd::stream;
 
-mod common;
-
 #[test]
 fn detect_fd_open_close() {
     let dir = tempdir().expect("tempdir");

@@ -2,7 +2,7 @@ use std::fs;
 use std::process::{Command, Stdio};
 use tempfile::tempdir;
 
-mod common;
+use fuzmon::test_utils::run_fuzmon_and_check;
 
 fn run_symbol_test(flags: &[&str], expected: &[&str]) {
     let dir = tempdir().expect("tempdir");
@@ -60,7 +60,7 @@ int main() {
 
     let pid = child.id();
     let logdir = tempdir().expect("logdir");
-    common::run_fuzmon_and_check(pid, &logdir, expected);
+    run_fuzmon_and_check(env!("CARGO_BIN_EXE_fuzmon"), pid, &logdir, expected);
 
     unsafe {
         let _ = nix::libc::kill(child.id() as i32, nix::libc::SIGINT);

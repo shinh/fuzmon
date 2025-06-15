@@ -2,7 +2,7 @@ use std::fs;
 use std::process::{Command, Stdio};
 use tempfile::{NamedTempFile, tempdir};
 
-mod common;
+use fuzmon::test_utils::wait_until_file_appears;
 
 fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let logdir = tempdir().expect("logdir");
@@ -43,7 +43,7 @@ fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         .spawn()
         .expect("run fuzmon");
 
-    common::wait_until_file_appears(&logdir, pid);
+    wait_until_file_appears(&logdir, pid);
     unsafe {
         let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
     }
@@ -84,7 +84,7 @@ fn run_default() -> (tempfile::TempDir, std::path::PathBuf) {
         .spawn()
         .expect("run fuzmon");
 
-    common::wait_until_file_appears(&logdir, pid);
+    wait_until_file_appears(&logdir, pid);
     unsafe {
         let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
     }

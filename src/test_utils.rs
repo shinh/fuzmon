@@ -15,7 +15,6 @@ pub fn wait_until_file_appears(logdir: &TempDir, pid: u32) {
     }
 }
 
-
 pub fn create_config(threshold: f64) -> NamedTempFile {
     let cfg_file = NamedTempFile::new().expect("cfg");
     fs::write(
@@ -29,12 +28,12 @@ pub fn create_config(threshold: f64) -> NamedTempFile {
     cfg_file
 }
 
-pub fn run_fuzmon_and_check(pid: u32, log_dir: &TempDir, expected: &[&str]) {
+pub fn run_fuzmon(bin: &str, pid: u32, log_dir: &TempDir) -> String {
     let pid_s = pid.to_string();
 
     let cfg_file = create_config(0.0);
 
-    let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+    let mut mon = Command::new(bin)
         .args([
             "run",
             "-p",
@@ -71,6 +70,12 @@ pub fn run_fuzmon_and_check(pid: u32, log_dir: &TempDir, expected: &[&str]) {
             log_content.push_str(&s);
         }
     }
+
+    log_content
+}
+
+pub fn run_fuzmon_and_check(bin: &str, pid: u32, log_dir: &TempDir, expected: &[&str]) {
+    let log_content = run_fuzmon(bin, pid, log_dir);
 
     for e in expected {
         assert!(
