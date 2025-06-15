@@ -8,3 +8,4 @@ compress = true
 [monitor]
 interval_sec = 60
 cpu_time_percent_threshold = 1.0  # record when CPU usage exceeds 1%
+stacktrace_percent_threshold = 1.0

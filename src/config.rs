@@ -66,6 +66,8 @@ pub struct MonitorConfig {
     pub interval_sec: Option<u64>,
     #[serde(default)]
     pub cpu_time_percent_threshold: Option<f64>,
+    #[serde(default)]
+    pub stacktrace_percent_threshold: Option<f64>,
 }
 
 #[derive(Default, Deserialize)]
@@ -114,6 +116,9 @@ pub fn merge_config(mut cfg: Config, args: &RunArgs) -> Config {
     if cfg.monitor.cpu_time_percent_threshold.is_none() {
         cfg.monitor.cpu_time_percent_threshold = Some(1.0);
     }
+    if cfg.monitor.stacktrace_percent_threshold.is_none() {
+        cfg.monitor.stacktrace_percent_threshold = Some(1.0);
+    }
     cfg
 }
 
@@ -135,6 +140,7 @@ mod tests {
         assert_eq!(cfg.output.compress, Some(true));
         assert_eq!(cfg.monitor.interval_sec, Some(60));
         assert_eq!(cfg.monitor.cpu_time_percent_threshold, Some(1.0));
+        assert_eq!(cfg.monitor.stacktrace_percent_threshold, Some(1.0));
         assert_eq!(cfg.filter.target_user.as_deref(), Some("myname"));
     }
 
@@ -165,5 +171,6 @@ mod tests {
         assert_eq!(merged.output.path.as_deref(), Some("/tmp/fuzmon"));
         assert_eq!(merged.output.compress, Some(true));
         assert_eq!(merged.monitor.cpu_time_percent_threshold, Some(1.0));
+        assert_eq!(merged.monitor.stacktrace_percent_threshold, Some(1.0));
     }
 }

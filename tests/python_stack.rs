@@ -77,7 +77,10 @@ if __name__ == '__main__':
     assert!(log.contains("test.py"), "{}", log);
     let first = log.lines().next().expect("line");
     let entry: serde_json::Value = serde_json::from_str(first).expect("json");
-    let threads = entry.get("threads").and_then(|v| v.as_array()).expect("threads");
+    let threads = entry
+        .get("threads")
+        .and_then(|v| v.as_array())
+        .expect("threads");
     let mut has_c = false;
     let mut has_py = false;
     for t in threads {

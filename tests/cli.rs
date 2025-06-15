@@ -1,7 +1,6 @@
+use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
-use std::fs;
-
 
 #[test]
 fn dump_outputs_entries() {

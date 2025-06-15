@@ -128,6 +128,7 @@ fn run(args: RunArgs) {
     };
 
     let cpu_percent_threshold = config.monitor.cpu_time_percent_threshold.unwrap_or(1.0);
+    let stacktrace_threshold = config.monitor.stacktrace_percent_threshold.unwrap_or(1.0);
 
     let term = Arc::new(AtomicBool::new(false));
     {
@@ -147,6 +148,7 @@ fn run(args: RunArgs) {
             target_uid,
             &ignore_patterns,
             cpu_percent_threshold,
+            stacktrace_threshold,
             output_dir,
             use_msgpack,
             compress,
@@ -176,11 +178,34 @@ fn monitor_iteration(
     target_uid: Option<u32>,
     ignore_patterns: &[Regex],
     cpu_percent_threshold: f64,
+    stacktrace_threshold: f64,
     output_dir: Option<&str>,
     use_msgpack: bool,
     compress: bool,
     verbose: bool,
 ) {
+    let pids = collect_pids(target_pid, target_uid);
+    if verbose {
+        println!("Found {} PIDs", pids.len());
+    }
+    prune_states(states, &pids);
+    for pid in &pids {
+        process_pid(
+            *pid,
+            states,
+            target_pid,
+            ignore_patterns,
+            cpu_percent_threshold,
+            stacktrace_threshold,
+            output_dir,
+            use_msgpack,
+            compress,
+            verbose,
+        );
+    }
+}
+
+fn collect_pids(target_pid: Option<u32>, target_uid: Option<u32>) -> Vec<u32> {
     let mut pids = if let Some(pid) = target_pid {
         vec![pid]
     } else {
@@ -191,9 +216,10 @@ fn monitor_iteration(
             pids.retain(|p| pid_uid(*p) == Some(uid));
         }
     }
-    if verbose {
-        println!("Found {} PIDs", pids.len());
-    }
+    pids
+}
+
+fn prune_states(states: &mut HashMap<u32, ProcState>, pids: &[u32]) {
     let existing: Vec<u32> = states.keys().copied().collect();
     let pid_set: HashSet<u32> = pids.iter().copied().collect();
     for old in &existing {
@@ -202,65 +228,70 @@ fn monitor_iteration(
             info!("process {} disappeared", old);
         }
     }
-    for pid in &pids {
-        let is_new = !states.contains_key(pid);
-        let state = states.entry(*pid).or_default();
-        let usage = get_proc_usage(*pid, state);
-        let cpu = usage.map(|u| u.0).unwrap_or(0.0);
-        if should_skip_pid(
-            *pid,
-            target_pid,
-            ignore_patterns,
-            cpu_percent_threshold,
-            cpu,
-        ) {
-            continue;
-        }
-        if is_new {
-            info!("new process {}", pid);
-        }
-        let raw_events = detect_fd_events(*pid, state);
-        state.pending_fd_events.extend(raw_events);
-        let rss = usage
-            .map(|u| u.1)
-            .unwrap_or_else(|| rss_kb(*pid).unwrap_or(0));
-        {
-            let fd_log_events: Vec<FdLogEvent> = state
-                .pending_fd_events
-                .drain(..)
-                .flat_map(|ev| {
-                    let mut events = Vec::new();
-                    if let Some(old_path) = ev.old_path {
-                        events.push(FdLogEvent {
-                            fd: ev.fd,
-                            event: "close".into(),
-                            path: old_path,
-                        });
-                    }
-                    if let Some(new_path) = ev.new_path {
-                        events.push(FdLogEvent {
-                            fd: ev.fd,
-                            event: "open".into(),
-                            path: new_path,
-                        });
-                    }
-                    events
-                })
-                .collect();
-            if verbose && !should_suppress(cpu, rss) {
-                println!("PID {:>5}: {:>5.1}% CPU, {:>8} KB RSS", pid, cpu, rss);
-            }
+}
 
-            if let Some(dir) = output_dir {
-                let entry = build_log_entry(*pid, cpu, rss, fd_log_events);
-                if verbose {
-                    if let Ok(line) = serde_json::to_string(&entry) {
-                        println!("{}", line);
-                    }
-                }
-                write_log(dir, &entry, use_msgpack, compress);
+fn process_pid(
+    pid: u32,
+    states: &mut HashMap<u32, ProcState>,
+    target_pid: Option<u32>,
+    ignore_patterns: &[Regex],
+    cpu_percent_threshold: f64,
+    stacktrace_threshold: f64,
+    output_dir: Option<&str>,
+    use_msgpack: bool,
+    compress: bool,
+    verbose: bool,
+) {
+    let is_new = !states.contains_key(&pid);
+    let state = states.entry(pid).or_default();
+    let usage = get_proc_usage(pid, state);
+    let cpu = usage.map(|u| u.0).unwrap_or(0.0);
+    if should_skip_pid(pid, target_pid, ignore_patterns, cpu_percent_threshold, cpu) {
+        return;
+    }
+    if is_new {
+        info!("new process {}", pid);
+    }
+    let raw_events = detect_fd_events(pid, state);
+    state.pending_fd_events.extend(raw_events);
+    let rss = usage
+        .map(|u| u.1)
+        .unwrap_or_else(|| rss_kb(pid).unwrap_or(0));
+    let fd_log_events: Vec<FdLogEvent> = state
+        .pending_fd_events
+        .drain(..)
+        .flat_map(|ev| {
+            let mut events = Vec::new();
+            if let Some(old_path) = ev.old_path {
+                events.push(FdLogEvent {
+                    fd: ev.fd,
+                    event: "close".into(),
+                    path: old_path,
+                });
+            }
+            if let Some(new_path) = ev.new_path {
+                events.push(FdLogEvent {
+                    fd: ev.fd,
+                    event: "open".into(),
+                    path: new_path,
+                });
+            }
+            events
+        })
+        .collect();
+
+    if verbose && !should_suppress(cpu, rss) {
+        println!("PID {:>5}: {:>5.1}% CPU, {:>8} KB RSS", pid, cpu, rss);
+    }
+
+    if let Some(dir) = output_dir {
+        let entry = build_log_entry(pid, cpu, rss, fd_log_events, stacktrace_threshold);
+        if verbose {
+            if let Ok(line) = serde_json::to_string(&entry) {
+                println!("{}", line);
             }
         }
+        write_log(dir, &entry, use_msgpack, compress);
     }
 }
 
@@ -284,7 +315,13 @@ fn should_skip_pid(
     false
 }
 
-fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> LogEntry {
+fn build_log_entry(
+    pid: u32,
+    cpu: f32,
+    rss: u64,
+    fd_events: Vec<FdLogEvent>,
+    stacktrace_threshold: f64,
+) -> LogEntry {
     let mut entry = LogEntry {
         timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         pid,
@@ -302,7 +339,7 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
         },
         threads: Vec::new(),
     };
-    if cpu < 1.0 {
+    if cpu < stacktrace_threshold as f32 {
         let name = &entry.process_name;
         let mut c_traces = capture_c_stack_traces(pid as i32);
         let mut py_traces = if name.starts_with("python") {

@@ -1,6 +1,6 @@
+use std::fs;
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
-use std::fs;
 use tempfile::TempDir;
 use zstd::stream;
 
@@ -21,13 +21,7 @@ pub fn run_fuzmon_and_check(pid: u32, log_dir: &TempDir, expected: &[&str]) {
     let pid_s = pid.to_string();
 
     let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
-        .args([
-            "run",
-            "-p",
-            &pid_s,
-            "-o",
-            log_dir.path().to_str().unwrap(),
-        ])
+        .args(["run", "-p", &pid_s, "-o", log_dir.path().to_str().unwrap()])
         .stdout(Stdio::null())
         .spawn()
         .expect("run fuzmon");
@@ -57,7 +51,11 @@ pub fn run_fuzmon_and_check(pid: u32, log_dir: &TempDir, expected: &[&str]) {
     }
 
     for e in expected {
-        assert!(log_content.contains(e), "expected '{}' in {}", e, log_content);
+        assert!(
+            log_content.contains(e),
+            "expected '{}' in {}",
+            e,
+            log_content
+        );
     }
 }
-
