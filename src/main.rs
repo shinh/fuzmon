@@ -83,13 +83,7 @@ fn main() {
 
 fn run(args: RunArgs) {
     let config = match args.config.as_deref() {
-        Some(path) => match load_config(path) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                warn!("{}", e);
-                Config::default()
-            }
-        },
+        Some(path) => load_config(path),
         None => Config::default(),
     };
     let config = merge_config(config, &args);
