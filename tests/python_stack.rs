@@ -80,4 +80,19 @@ if __name__ == '__main__':
     assert!(log.contains("foo"), "{}", log);
     assert!(log.contains("bar"), "{}", log);
     assert!(log.contains("test.py"), "{}", log);
+    let first = log.lines().next().expect("line");
+    let entry: serde_json::Value = serde_json::from_str(first).expect("json");
+    let threads = entry.get("threads").and_then(|v| v.as_array()).expect("threads");
+    let mut has_c = false;
+    let mut has_py = false;
+    for t in threads {
+        if t.get("stacktrace").is_some() {
+            has_c = true;
+        }
+        if t.get("python_stacktrace").is_some() {
+            has_py = true;
+        }
+    }
+    assert!(has_c, "no c stacktrace: {}", first);
+    assert!(has_py, "no python stacktrace: {}", first);
 }

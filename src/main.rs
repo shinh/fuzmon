@@ -22,7 +22,7 @@ use crate::procinfo::{
     ProcState, detect_fd_events, get_proc_usage, pid_uid, proc_cpu_jiffies, proc_cpu_time_sec,
     process_name, read_pids, should_suppress, swap_kb, vsz_kb,
 };
-use crate::stacktrace::{capture_python_stack_traces, capture_stack_traces};
+use crate::stacktrace::{capture_c_stack_traces, capture_python_stack_traces};
 use clap::CommandFactory;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -42,7 +42,16 @@ struct LogEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     fd_events: Option<Vec<FdLogEvent>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    stacktrace: Vec<Option<Vec<String>>>,
+    threads: Vec<ThreadInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ThreadInfo {
+    tid: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stacktrace: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    python_stacktrace: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -251,20 +260,28 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
         } else {
             Some(fd_events)
         },
-        stacktrace: Vec::new(),
+        threads: Vec::new(),
     };
     if cpu < 1.0 {
         let name = &entry.process_name;
-        if name.starts_with("python") {
+        let mut c_traces = capture_c_stack_traces(pid as i32);
+        let mut py_traces = if name.starts_with("python") {
             match capture_python_stack_traces(pid as i32) {
-                Ok(t) => entry.stacktrace = t,
+                Ok(t) => t,
                 Err(e) => {
                     warn!("python trace failed: {}", e);
-                    entry.stacktrace = capture_stack_traces(pid as i32);
+                    HashMap::new()
                 }
             }
         } else {
-            entry.stacktrace = capture_stack_traces(pid as i32);
+            HashMap::new()
+        };
+        for (tid, c) in c_traces.drain(..) {
+            let py = py_traces.remove(&(tid as u32));
+            entry.threads.push(ThreadInfo { tid: tid as u32, stacktrace: c, python_stacktrace: py });
+        }
+        for (tid, py) in py_traces.into_iter() {
+            entry.threads.push(ThreadInfo { tid, stacktrace: None, python_stacktrace: Some(py) });
         }
     }
     entry
