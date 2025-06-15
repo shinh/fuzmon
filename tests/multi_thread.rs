@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::fs;
 use std::process::{Command, Stdio};
+use std::io::Write;
 use std::{thread, time::Duration};
 use tempfile::tempdir;
 
@@ -13,14 +14,34 @@ fn multi_thread_stacktrace_has_multiple_entries() {
         r#"
 #include <pthread.h>
 #include <unistd.h>
+
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+static int done = 0;
+
 void* worker(void* arg) {
-    while (1) { sleep(1); }
+    (void)arg;
+    pthread_mutex_lock(&mutex);
+    while (!done) {
+        pthread_cond_wait(&cond, &mutex);
+    }
+    pthread_mutex_unlock(&mutex);
     return NULL;
 }
+
 int main() {
     pthread_t t;
     pthread_create(&t, NULL, worker, NULL);
-    while (1) { sleep(1); }
+
+    char buf;
+    read(0, &buf, 1);
+
+    pthread_mutex_lock(&mutex);
+    done = 1;
+    pthread_cond_signal(&cond);
+    pthread_mutex_unlock(&mutex);
+
+    pthread_join(t, NULL);
     return 0;
 }
 "#,
@@ -42,9 +63,11 @@ int main() {
     );
 
     let mut child = Command::new(&exe)
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()
         .expect("spawn");
+    let mut child_in = child.stdin.take().expect("child stdin");
 
     thread::sleep(Duration::from_millis(500));
     let pid = child.id();
@@ -66,7 +89,8 @@ int main() {
     let _ = mon.kill();
     let _ = mon.wait();
 
-    let _ = child.kill();
+    child_in.write_all(b"\n").unwrap();
+    drop(child_in);
     let _ = child.wait();
 
     let plain = logdir.path().join(format!("{}.jsonl", pid));
