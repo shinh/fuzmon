@@ -36,7 +36,7 @@ sys.stdin.readline()
 
     let logdir = tempdir().expect("logdir");
     let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
-        .args(["-p", &pid.to_string(), "-o", logdir.path().to_str().unwrap()])
+        .args(["run", "-p", &pid.to_string(), "-o", logdir.path().to_str().unwrap()])
         .stdout(Stdio::null())
         .spawn()
         .expect("run fuzmon");

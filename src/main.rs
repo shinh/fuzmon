@@ -10,7 +10,8 @@ mod config;
 mod procinfo;
 mod stacktrace;
 
-use crate::config::{parse_args, load_config, merge_config, uid_from_name, CmdArgs};
+use crate::config::{parse_cli, load_config, merge_config, uid_from_name, Cli, Commands, RunArgs};
+use clap::CommandFactory;
 use crate::procinfo::{
     read_pids, pid_uid, get_proc_usage, ProcState, should_suppress, process_name,
     proc_cpu_time_sec, proc_cpu_jiffies, vsz_kb, swap_kb, detect_fd_events,
@@ -45,11 +46,19 @@ struct FdLogEvent {
 }
 
 fn main() {
-    let args = parse_args();
-    run(args);
+    let cli = parse_cli();
+    if let Some(cmd) = cli.command {
+        match cmd {
+            Commands::Run(args) => run(args),
+            Commands::Dump => println!("TODO!"),
+        }
+    } else {
+        Cli::command().print_help().unwrap();
+        println!();
+    }
 }
 
-fn run(args: CmdArgs) {
+fn run(args: RunArgs) {
     let config = args
         .config
         .as_deref()
