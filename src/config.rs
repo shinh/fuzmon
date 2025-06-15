@@ -128,7 +128,7 @@ pub fn merge_config(mut cfg: Config, args: &RunArgs) -> Config {
         cfg.monitor.record_cpu_time_percent_threshold = Some(0.0);
     }
     if cfg.monitor.stacktrace_cpu_time_percent_threshold.is_none() {
-        cfg.monitor.stacktrace_cpu_time_percent_threshold = Some(0.0);
+        cfg.monitor.stacktrace_cpu_time_percent_threshold = Some(1.0);
     }
     cfg
 }
@@ -184,7 +184,7 @@ mod tests {
         assert_eq!(merged.monitor.record_cpu_time_percent_threshold, Some(0.0));
         assert_eq!(
             merged.monitor.stacktrace_cpu_time_percent_threshold,
-            Some(0.0)
+            Some(1.0)
         );
     }
 

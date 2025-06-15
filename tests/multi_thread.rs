@@ -72,6 +72,13 @@ int main() {
     let pid = child.id();
 
     let logdir = tempdir().expect("logdir");
+    let cfg_file = tempfile::NamedTempFile::new().expect("cfg");
+    std::fs::write(
+        cfg_file.path(),
+        "[monitor]\nstacktrace_cpu_time_percent_threshold = 0.0",
+    )
+    .expect("write cfg");
+
     let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
         .args([
             "run",
@@ -79,6 +86,8 @@ int main() {
             &pid.to_string(),
             "-o",
             logdir.path().to_str().unwrap(),
+            "-c",
+            cfg_file.path().to_str().unwrap(),
         ])
         .stdout(Stdio::null())
         .spawn()
