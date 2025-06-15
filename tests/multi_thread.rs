@@ -27,17 +27,19 @@ int main() {
     )
     .expect("write src");
     let exe = dir.path().join("prog");
-    assert!(Command::new("gcc")
-        .args([
-            "-g",
-            "-pthread",
-            src.to_str().unwrap(),
-            "-o",
-            exe.to_str().unwrap()
-        ])
-        .status()
-        .expect("compile")
-        .success());
+    assert!(
+        Command::new("gcc")
+            .args([
+                "-g",
+                "-pthread",
+                src.to_str().unwrap(),
+                "-o",
+                exe.to_str().unwrap()
+            ])
+            .status()
+            .expect("compile")
+            .success()
+    );
 
     let mut child = Command::new(&exe)
         .stdout(Stdio::null())
@@ -67,8 +69,18 @@ int main() {
     let _ = child.kill();
     let _ = child.wait();
 
-    let log_path = logdir.path().join(format!("{}.jsonl", pid));
-    let log = fs::read_to_string(log_path).expect("read log");
+    let plain = logdir.path().join(format!("{}.jsonl", pid));
+    let path = if plain.exists() {
+        plain
+    } else {
+        logdir.path().join(format!("{}.jsonl.zst", pid))
+    };
+    let log = if path.extension().and_then(|e| e.to_str()) == Some("zst") {
+        let data = fs::read(&path).expect("read log");
+        String::from_utf8_lossy(&zstd::stream::decode_all(&*data).expect("decompress")).into_owned()
+    } else {
+        fs::read_to_string(&path).expect("read log")
+    };
     let line = log.lines().next().expect("line");
     let entry: Value = serde_json::from_str(line).expect("json");
     let stack = entry

@@ -1,22 +1,26 @@
-use std::{thread::sleep, time::Duration, collections::{HashMap, HashSet}};
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write, BufRead, BufReader};
-use std::path::Path;
-use serde::{Serialize, Deserialize};
-use regex::Regex;
 use chrono::Utc;
-use rmp_serde::encode::write_named;
 use log::{info, warn};
-use rmp_serde::decode::{from_read as read_msgpack, Error as MsgpackError};
+use regex::Regex;
+use rmp_serde::decode::{Error as MsgpackError, from_read as read_msgpack};
+use rmp_serde::encode::write_named;
+use serde::{Deserialize, Serialize};
+use std::fs::{self, OpenOptions};
+use std::io::{self, BufRead, BufReader, Write};
+use std::path::Path;
+use std::{
+    collections::{HashMap, HashSet},
+    thread::sleep,
+    time::Duration,
+};
 
 mod config;
 mod procinfo;
 mod stacktrace;
 
-use crate::config::{load_config, merge_config, parse_cli, uid_from_name, Cli, Commands, RunArgs};
+use crate::config::{Cli, Commands, RunArgs, load_config, merge_config, parse_cli, uid_from_name};
 use crate::procinfo::{
-    detect_fd_events, get_proc_usage, pid_uid, proc_cpu_jiffies, proc_cpu_time_sec, process_name,
-    read_pids, should_suppress, swap_kb, vsz_kb, ProcState,
+    ProcState, detect_fd_events, get_proc_usage, pid_uid, proc_cpu_jiffies, proc_cpu_time_sec,
+    process_name, read_pids, should_suppress, swap_kb, vsz_kb,
 };
 use crate::stacktrace::{capture_python_stack_traces, capture_stack_traces};
 use clap::CommandFactory;
@@ -78,8 +82,19 @@ fn run(args: RunArgs) {
         .filter_map(|p| Regex::new(&p).ok())
         .collect();
 
-    let use_msgpack = matches!(config.output.format.as_deref(), Some("msgpack"));
-    let compress = config.output.compress.unwrap_or(false);
+    let mut format = config.output.format.as_deref().unwrap_or("jsonl.zst");
+    format = match format {
+        "json" => "jsonl",
+        "json.zst" => "jsonl.zst",
+        "msgpack" => "msgpacks",
+        "msgpack.zst" => "msgpacks.zst",
+        other => other,
+    };
+    let use_msgpack = matches!(format, "msgpacks" | "msgpacks.zst");
+    let compress = config
+        .output
+        .compress
+        .unwrap_or_else(|| format.ends_with(".zst"));
     let verbose = args.verbose;
 
     let output_dir = config.output.path.as_deref();
@@ -243,7 +258,8 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
         if name.starts_with("python") {
             match capture_python_stack_traces(pid as i32) {
                 Ok(t) => entry.stacktrace = t,
-                Err(_) => {
+                Err(e) => {
+                    warn!("python trace failed: {}", e);
                     entry.stacktrace = capture_stack_traces(pid as i32);
                 }
             }
@@ -255,7 +271,7 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
 }
 
 fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
-    let ext = if use_msgpack { "msgs" } else { "jsonl" };
+    let ext = if use_msgpack { "msgpacks" } else { "jsonl" };
     let base = format!("{}/{}.{}", dir.trim_end_matches('/'), entry.pid, ext);
     let path = if compress {
         format!("{}.zst", base)
@@ -305,7 +321,6 @@ fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
     }
 }
 
-
 fn read_log_entries(path: &Path) -> io::Result<Vec<LogEntry>> {
     let file = fs::File::open(path)?;
     let is_zst = path.extension().and_then(|e| e.to_str()) == Some("zst");
@@ -326,7 +341,7 @@ fn read_log_entries(path: &Path) -> io::Result<Vec<LogEntry>> {
             .to_string()
     };
 
-    if ext == "msgs" {
+    if ext == "msgpacks" {
         let mut r = reader;
         let mut entries = Vec::new();
         loop {

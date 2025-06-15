@@ -1,13 +1,15 @@
+use std::fs;
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
-use std::fs;
 use tempfile::tempdir;
 
 #[test]
 fn python_stack_trace_contains_functions() {
     let dir = tempdir().expect("tempdir");
     let script = dir.path().join("test.py");
-    fs::write(&script, r#"
+    fs::write(
+        &script,
+        r#"
 import time
 
 def foo():
@@ -19,7 +21,9 @@ def bar():
 
 if __name__ == '__main__':
     foo()
-"#).expect("write script");
+"#,
+    )
+    .expect("write script");
 
     let mut child = Command::new("python3")
         .arg(&script)
@@ -32,7 +36,13 @@ if __name__ == '__main__':
 
     let logdir = tempdir().expect("logdir");
     let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
-        .args(["run", "-p", &pid.to_string(), "-o", logdir.path().to_str().unwrap()])
+        .args([
+            "run",
+            "-p",
+            &pid.to_string(),
+            "-o",
+            logdir.path().to_str().unwrap(),
+        ])
         .stdout(Stdio::null())
         .spawn()
         .expect("run fuzmon");
@@ -44,8 +54,18 @@ if __name__ == '__main__':
     let _ = child.kill();
     let _ = child.wait();
 
-    let log_path = logdir.path().join(format!("{}.jsonl", pid));
-    let log = fs::read_to_string(log_path).expect("read log");
+    let plain = logdir.path().join(format!("{}.jsonl", pid));
+    let path = if plain.exists() {
+        plain
+    } else {
+        logdir.path().join(format!("{}.jsonl.zst", pid))
+    };
+    let log = if path.extension().and_then(|e| e.to_str()) == Some("zst") {
+        let data = fs::read(&path).expect("read log");
+        String::from_utf8_lossy(&zstd::stream::decode_all(&*data).expect("decompress")).into_owned()
+    } else {
+        fs::read_to_string(&path).expect("read log")
+    };
     assert!(log.contains("foo"), "{}", log);
     assert!(log.contains("bar"), "{}", log);
     assert!(log.contains("test.py"), "{}", log);
