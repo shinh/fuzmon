@@ -4,6 +4,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
 use tempfile::tempdir;
+mod common;
 
 #[test]
 fn multi_thread_stacktrace_has_multiple_entries() {
@@ -72,12 +73,7 @@ int main() {
     let pid = child.id();
 
     let logdir = tempdir().expect("logdir");
-    let cfg_file = tempfile::NamedTempFile::new().expect("cfg");
-    std::fs::write(
-        cfg_file.path(),
-        "[monitor]\nstacktrace_cpu_time_percent_threshold = 0.0",
-    )
-    .expect("write cfg");
+    let cfg_file = common::create_config(0.0);
 
     let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
         .args([

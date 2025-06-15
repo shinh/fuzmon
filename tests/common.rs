@@ -17,15 +17,24 @@ pub fn wait_until_file_appears(logdir: &TempDir, pid: u32) {
 }
 
 #[allow(dead_code)]
-pub fn run_fuzmon_and_check(pid: u32, log_dir: &TempDir, expected: &[&str]) {
-    let pid_s = pid.to_string();
-
+pub fn create_config(threshold: f64) -> NamedTempFile {
     let cfg_file = NamedTempFile::new().expect("cfg");
     fs::write(
         cfg_file.path(),
-        "[monitor]\nstacktrace_cpu_time_percent_threshold = 0.0",
+        format!(
+            "[monitor]\nstacktrace_cpu_time_percent_threshold = {}",
+            threshold
+        ),
     )
     .expect("write cfg");
+    cfg_file
+}
+
+#[allow(dead_code)]
+pub fn run_fuzmon_and_check(pid: u32, log_dir: &TempDir, expected: &[&str]) {
+    let pid_s = pid.to_string();
+
+    let cfg_file = create_config(0.0);
 
     let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
         .args([
