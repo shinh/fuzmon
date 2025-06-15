@@ -358,7 +358,7 @@ fn build_log_entry(
         },
         threads: Vec::new(),
     };
-    if cpu < stacktrace_cpu_percent_threshold as f32 {
+    if cpu >= stacktrace_cpu_percent_threshold as f32 {
         let name = &entry.process_name;
         let mut c_traces = capture_c_stack_traces(pid as i32);
         let mut py_traces = if name.starts_with("python") {
