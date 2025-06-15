@@ -86,7 +86,9 @@ int main() {
         .expect("run");
 
     thread::sleep(Duration::from_millis(800));
-    let _ = mon.kill();
+    unsafe {
+        let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
+    }
     let _ = mon.wait();
 
     child_in.write_all(b"\n").unwrap();

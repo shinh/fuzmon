@@ -11,6 +11,7 @@ use std::{
     collections::{HashMap, HashSet},
     thread::sleep,
     time::Duration,
+    sync::{atomic::{AtomicBool, Ordering}, Arc},
 };
 
 mod config;
@@ -123,7 +124,20 @@ fn run(args: RunArgs) {
         Duration::from_secs(interval)
     };
 
-    let cpu_jiffies_threshold = config.monitor.cpu_time_jiffies_threshold.unwrap_or(1);
+    let cpu_jiffies_threshold = config
+        .monitor
+        .cpu_time_jiffies_threshold
+        .unwrap_or(1);
+
+    let term = Arc::new(AtomicBool::new(false));
+    {
+        let t = term.clone();
+        ctrlc::set_handler(move || {
+            t.store(true, Ordering::SeqCst);
+            info!("SIGINT received, shutting down");
+        })
+        .expect("set SIGINT handler");
+    }
 
     let mut states: HashMap<u32, ProcState> = HashMap::new();
     loop {
@@ -138,7 +152,21 @@ fn run(args: RunArgs) {
             compress,
             verbose,
         );
-        sleep(sleep_dur);
+        if term.load(Ordering::SeqCst) {
+            break;
+        }
+        let mut elapsed = Duration::from_millis(0);
+        while elapsed < sleep_dur {
+            if term.load(Ordering::SeqCst) {
+                return;
+            }
+            let step = std::cmp::min(Duration::from_millis(100), sleep_dur - elapsed);
+            sleep(step);
+            elapsed += step;
+        }
+        if term.load(Ordering::SeqCst) {
+            break;
+        }
     }
 }
 

@@ -34,7 +34,9 @@ pub fn run_fuzmon_and_check(pid: u32, log_dir: &TempDir, expected: &[&str]) {
         .expect("run fuzmon");
 
     wait_until_file_appears(log_dir, pid);
-    let _ = mon.kill();
+    unsafe {
+        let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
+    }
     let _ = mon.wait();
 
     let mut log_content = String::new();
