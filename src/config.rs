@@ -49,6 +49,9 @@ pub struct RunArgs {
     /// Verbose output
     #[arg(short, long)]
     pub verbose: bool,
+    /// Command to run and monitor
+    #[arg(trailing_var_arg = true)]
+    pub command: Vec<String>,
 }
 
 #[derive(Default, Deserialize)]

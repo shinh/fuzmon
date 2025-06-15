@@ -286,7 +286,11 @@ fn monitor_iteration(
 
 fn collect_pids(target_pid: Option<u32>, target_uid: Option<u32>) -> Vec<u32> {
     let mut pids = if let Some(pid) = target_pid {
-        vec![pid]
+        if fs::metadata(format!("/proc/{}", pid)).is_ok() {
+            vec![pid]
+        } else {
+            Vec::new()
+        }
     } else {
         read_pids()
     };
