@@ -75,6 +75,7 @@ fn main() {
         match cmd {
             Commands::Run(args) => run(args),
             Commands::Dump(args) => dump(&args.path),
+            Commands::Report(args) => report(&args.path),
         }
     } else {
         Cli::command().print_help().unwrap();
@@ -527,4 +528,80 @@ fn dump_file(path: &Path) {
         }
         Err(e) => eprintln!("failed to read {}: {}", path.display(), e),
     }
+}
+
+fn report(path: &str) {
+    let file_path = Path::new(path);
+    match read_log_entries(file_path) {
+        Ok(entries) => {
+            if entries.is_empty() {
+                println!("<p>No entries</p>");
+                return;
+            }
+            let mut sorted = entries;
+            sorted.sort_by_key(|e| e.timestamp.clone());
+            let first = &sorted[0];
+            let pid = first.pid;
+            let cmd = read_cmdline(pid).unwrap_or_else(|| first.process_name.clone());
+            let env = read_environ(pid).unwrap_or_else(|| "".into());
+            let start = chrono::DateTime::parse_from_rfc3339(&first.timestamp)
+                .map(|t| t.with_timezone(&Utc))
+                .unwrap();
+            let end = chrono::DateTime::parse_from_rfc3339(&sorted.last().unwrap().timestamp)
+                .map(|t| t.with_timezone(&Utc))
+                .unwrap();
+            let total_time = (end - start).num_seconds();
+            let mut cpu = 0.0f64;
+            let mut peak_rss = 0u64;
+            for win in sorted.windows(2) {
+                if let [a, b] = win {
+                    let ta = chrono::DateTime::parse_from_rfc3339(&a.timestamp)
+                        .map(|t| t.with_timezone(&Utc))
+                        .unwrap();
+                    let tb = chrono::DateTime::parse_from_rfc3339(&b.timestamp)
+                        .map(|t| t.with_timezone(&Utc))
+                        .unwrap();
+                    let dt = (tb - ta).num_seconds() as f64;
+                    cpu += a.cpu_time_percent * dt / 100.0;
+                }
+            }
+            for e in &sorted {
+                peak_rss = peak_rss.max(e.memory.rss_kb);
+            }
+            println!("<html><body>");
+            println!("<h1>Report for PID {}</h1>", pid);
+            println!("<p>Command: {}</p>", html_escape::encode_text(&cmd));
+            println!("<ul>");
+            println!("<li>Total runtime: {} sec</li>", total_time);
+            println!("<li>Total CPU time: {:.1} sec</li>", cpu);
+            println!("<li>Peak RSS: {} KB</li>", peak_rss);
+            println!("</ul>");
+            if !env.is_empty() {
+                println!("<h2>Environment</h2>");
+                println!("<pre>{}</pre>", html_escape::encode_text(&env));
+            }
+            println!("</body></html>");
+        }
+        Err(e) => warn!("failed to read {}: {}", file_path.display(), e),
+    }
+}
+
+fn read_cmdline(pid: u32) -> Option<String> {
+    fs::read(format!("/proc/{}/cmdline", pid)).ok().map(|data| {
+        let parts: Vec<&str> = data
+            .split(|&b| b == 0)
+            .filter_map(|s| std::str::from_utf8(s).ok())
+            .collect();
+        parts.first().cloned().unwrap_or("").to_string()
+    })
+}
+
+fn read_environ(pid: u32) -> Option<String> {
+    fs::read(format!("/proc/{}/environ", pid)).ok().map(|data| {
+        data.split(|&b| b == 0)
+            .filter_map(|s| std::str::from_utf8(s).ok())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<&str>>()
+            .join("\n")
+    })
 }
