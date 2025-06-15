@@ -1,3 +1,4 @@
+use crate::utils::current_date_string;
 use std::fs;
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
@@ -5,8 +6,10 @@ use tempfile::{NamedTempFile, TempDir};
 use zstd::stream;
 
 pub fn wait_until_file_appears(logdir: &TempDir, pid: u32) {
-    let plain = logdir.path().join(format!("{pid}.jsonl"));
-    let zst = logdir.path().join(format!("{pid}.jsonl.zst"));
+    let date = current_date_string();
+    let dir = logdir.path().join(&date);
+    let plain = dir.join(format!("{pid}.jsonl"));
+    let zst = dir.join(format!("{pid}.jsonl.zst"));
     for _ in 0..80 {
         if plain.exists() || zst.exists() {
             break;
@@ -56,22 +59,33 @@ pub fn run_fuzmon(bin: &str, pid: u32, log_dir: &TempDir) -> String {
     let mut log_content = String::new();
     for entry in fs::read_dir(log_dir.path()).expect("read_dir") {
         let path = entry.expect("entry").path();
-        if let Some(ext) = path.extension() {
-            if ext == "zst" {
-                if let Ok(data) = fs::read(&path) {
-                    if let Ok(decoded) = stream::decode_all(&*data) {
-                        log_content.push_str(&String::from_utf8_lossy(&decoded));
-                        continue;
-                    }
-                }
+        if path.is_dir() {
+            for sub in fs::read_dir(&path).expect("read_dir") {
+                let sub_path = sub.expect("subentry").path();
+                append_file(&sub_path, &mut log_content);
             }
-        }
-        if let Ok(s) = fs::read_to_string(&path) {
-            log_content.push_str(&s);
+        } else {
+            append_file(&path, &mut log_content);
         }
     }
 
     log_content
+}
+
+fn append_file(path: &std::path::Path, log_content: &mut String) {
+    if let Some(ext) = path.extension() {
+        if ext == "zst" {
+            if let Ok(data) = fs::read(path) {
+                if let Ok(decoded) = stream::decode_all(&*data) {
+                    log_content.push_str(&String::from_utf8_lossy(&decoded));
+                    return;
+                }
+            }
+        }
+    }
+    if let Ok(s) = fs::read_to_string(path) {
+        log_content.push_str(&s);
+    }
 }
 
 pub fn run_fuzmon_and_check(bin: &str, pid: u32, log_dir: &TempDir, expected: &[&str]) {

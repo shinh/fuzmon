@@ -30,6 +30,7 @@ use crate::procinfo::{
 };
 use crate::stacktrace::{capture_c_stack_traces, capture_python_stack_traces};
 use clap::CommandFactory;
+use fuzmon::utils::current_date_string;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct MemoryInfo {
@@ -392,8 +393,13 @@ fn build_log_entry(
 }
 
 fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
+    let date = current_date_string();
+    let dir = format!("{}/{}", dir.trim_end_matches('/'), date);
+    if let Err(e) = fs::create_dir_all(&dir) {
+        warn!("failed to create {}: {}", dir, e);
+    }
     let ext = if use_msgpack { "msgpacks" } else { "jsonl" };
-    let base = format!("{}/{}.{}", dir.trim_end_matches('/'), entry.pid, ext);
+    let base = format!("{}/{}.{}", dir, entry.pid, ext);
     let path = if compress {
         format!("{}.zst", base)
     } else {
