@@ -47,6 +47,10 @@ struct LogEntry {
     cpu_time_percent: f64,
     memory: MemoryInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
+    cmdline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     fd_events: Option<Vec<FdLogEvent>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     threads: Vec<ThreadInfo>,
@@ -179,6 +183,20 @@ fn run(args: RunArgs) {
             break;
         }
     }
+    if term.load(Ordering::SeqCst) {
+        monitor_iteration(
+            &mut states,
+            target_pid,
+            target_uid,
+            &ignore_patterns,
+            record_cpu_percent_threshold,
+            stacktrace_cpu_percent_threshold,
+            output_dir,
+            use_msgpack,
+            compress,
+            verbose,
+        );
+    }
 }
 
 fn monitor_iteration(
@@ -197,7 +215,7 @@ fn monitor_iteration(
     if verbose {
         println!("Found {} PIDs", pids.len());
     }
-    prune_states(states, &pids);
+    prune_states(states, &pids, output_dir, use_msgpack, compress);
     for pid in &pids {
         process_pid(
             *pid,
@@ -228,12 +246,49 @@ fn collect_pids(target_pid: Option<u32>, target_uid: Option<u32>) -> Vec<u32> {
     pids
 }
 
-fn prune_states(states: &mut HashMap<u32, ProcState>, pids: &[u32]) {
+fn prune_states(
+    states: &mut HashMap<u32, ProcState>,
+    pids: &[u32],
+    output_dir: Option<&str>,
+    use_msgpack: bool,
+    compress: bool,
+) {
     let existing: Vec<u32> = states.keys().copied().collect();
     let pid_set: HashSet<u32> = pids.iter().copied().collect();
     for old in &existing {
         if !pid_set.contains(old) {
-            states.remove(old);
+            if let Some(mut state) = states.remove(old) {
+                if let Some(dir) = output_dir {
+                    let events: Vec<FdLogEvent> = state
+                        .fds
+                        .drain()
+                        .map(|(fd, path)| FdLogEvent {
+                            fd,
+                            event: "close".into(),
+                            path,
+                        })
+                        .collect();
+                    if !events.is_empty() {
+                        let entry = LogEntry {
+                            timestamp: Utc::now()
+                                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                            pid: *old,
+                            process_name: process_name(*old).unwrap_or_else(|| "?".into()),
+                            cpu_time_percent: 0.0,
+                            memory: MemoryInfo {
+                                rss_kb: 0,
+                                vsz_kb: 0,
+                                swap_kb: 0,
+                            },
+                            cmdline: None,
+                            env: None,
+                            fd_events: Some(events),
+                            threads: Vec::new(),
+                        };
+                        write_log(dir, &entry, use_msgpack, compress);
+                    }
+                }
+            }
             info!("process {} disappeared", old);
         }
     }
@@ -302,6 +357,7 @@ fn process_pid(
     if let Some(dir) = output_dir {
         let entry = build_log_entry(
             pid,
+            state,
             cpu,
             rss,
             fd_log_events,
@@ -338,6 +394,7 @@ fn should_skip_pid(
 
 fn build_log_entry(
     pid: u32,
+    state: &mut ProcState,
     cpu_percent: f32,
     rss: u64,
     fd_events: Vec<FdLogEvent>,
@@ -353,6 +410,8 @@ fn build_log_entry(
             vsz_kb: vsz_kb(pid).unwrap_or(0),
             swap_kb: swap_kb(pid).unwrap_or(0),
         },
+        cmdline: None,
+        env: None,
         fd_events: if fd_events.is_empty() {
             None
         } else {
@@ -360,6 +419,11 @@ fn build_log_entry(
         },
         threads: Vec::new(),
     };
+    if !state.metadata_written {
+        entry.cmdline = read_cmdline(pid);
+        entry.env = read_environ(pid);
+        state.metadata_written = true;
+    }
     if cpu_percent >= stacktrace_cpu_percent_threshold as f32 {
         let name = &entry.process_name;
         let mut c_traces = capture_c_stack_traces(pid as i32);
@@ -542,8 +606,16 @@ fn report(path: &str) {
             sorted.sort_by_key(|e| e.timestamp.clone());
             let first = &sorted[0];
             let pid = first.pid;
-            let cmd = read_cmdline(pid).unwrap_or_else(|| first.process_name.clone());
-            let env = read_environ(pid).unwrap_or_else(|| "".into());
+            let cmd = first
+                .cmdline
+                .clone()
+                .or_else(|| read_cmdline(pid))
+                .unwrap_or_else(|| first.process_name.clone());
+            let env = first
+                .env
+                .clone()
+                .or_else(|| read_environ(pid))
+                .unwrap_or_else(|| "".into());
             let start = chrono::DateTime::parse_from_rfc3339(&first.timestamp)
                 .map(|t| t.with_timezone(&Utc))
                 .unwrap();
@@ -588,11 +660,11 @@ fn report(path: &str) {
 
 fn read_cmdline(pid: u32) -> Option<String> {
     fs::read(format!("/proc/{}/cmdline", pid)).ok().map(|data| {
-        let parts: Vec<&str> = data
-            .split(|&b| b == 0)
+        data.split(|&b| b == 0)
             .filter_map(|s| std::str::from_utf8(s).ok())
-            .collect();
-        parts.first().cloned().unwrap_or("").to_string()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<&str>>()
+            .join(" ")
     })
 }
 
