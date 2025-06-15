@@ -157,6 +157,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
+name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
+
+[[package]]
 name = "bindgen"
 version = "0.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -699,10 +705,12 @@ name = "fuzmon"
 version = "0.1.0"
 dependencies = [
  "addr2line 0.25.0",
+ "base64",
  "chrono",
  "clap 4.5.40",
  "ctrlc",
  "env_logger 0.10.2",
+ "flate2",
  "html-escape",
  "log",
  "memmap2",

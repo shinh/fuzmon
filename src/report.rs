@@ -1,4 +1,7 @@
+use base64::{Engine as _, engine::general_purpose};
 use chrono::Utc;
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use html_escape::encode_text;
 use log::warn;
 use plotters::prelude::*;
@@ -6,6 +9,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::config::{ReportArgs, finalize_report_config, load_config};
@@ -293,6 +297,41 @@ fn write_trace(entries: &[LogEntry], out_dir: &Path, pid: u32) {
     }
 }
 
+fn write_trace_html(out_dir: &Path, pid: u32) {
+    let json_path = out_dir.join(format!("{}_trace.json", pid));
+    let html_path = out_dir.join(format!("{}_trace.html", pid));
+    let Ok(data) = fs::read(&json_path) else {
+        return;
+    };
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    if encoder.write_all(&data).is_err() {
+        return;
+    }
+    let Ok(gz) = encoder.finish() else {
+        return;
+    };
+    let b64 = general_purpose::STANDARD.encode(gz);
+    let viewer = include_str!("../trace_viewer_full.html");
+    let mut content = String::with_capacity(viewer.len() + b64.len() + 100);
+    if let Some(pos) = viewer.rfind("</html>") {
+        content.push_str(&viewer[..pos]);
+        content.push_str(&format!(
+            "<script id=\"viewer-data\" type=\"text/plain\">{}</script>",
+            b64
+        ));
+        content.push_str(&viewer[pos..]);
+    } else {
+        content.push_str(viewer);
+        content.push_str(&format!(
+            "<script id=\"viewer-data\" type=\"text/plain\">{}</script>",
+            b64
+        ));
+    }
+    if let Err(e) = fs::write(&html_path, content) {
+        warn!("failed to write {}: {}", html_path.display(), e);
+    }
+}
+
 fn truncate(s: &str, len: usize) -> String {
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
@@ -334,6 +373,10 @@ fn render_single(s: &Stats) -> String {
         "<p>RSS<br><img src=\"{}_rss.svg\" alt=\"RSS graph\" /></p>\n",
         s.pid
     ));
+    out.push_str(&format!(
+        "<p><a href=\"{}_trace.html\">View trace</a></p>\n",
+        s.pid
+    ));
     out.push_str("</body></html>\n");
     out
 }
@@ -372,6 +415,7 @@ fn report_file(path: &Path, out_dir: &Path) {
             if let Some(s) = calc_stats(path, &entries) {
                 write_graphs(&entries, out_dir, s.pid);
                 write_trace(&entries, out_dir, s.pid);
+                write_trace_html(out_dir, s.pid);
                 let html = render_single(&s);
                 let index = out_dir.join("index.html");
                 if let Err(e) = fs::write(&index, html) {
@@ -453,6 +497,7 @@ fn report_dir(path: &Path, out_dir: &Path, top_cpu: usize, top_rss: usize) {
                 if let Some(stats) = calc_stats(Path::new(&s.path), &entries) {
                     write_graphs(&entries, out_dir, s.pid);
                     write_trace(&entries, out_dir, s.pid);
+                    write_trace_html(out_dir, s.pid);
                     let html = render_single(&stats);
                     let out = out_dir.join(format!("{}.html", s.pid));
                     if let Err(e) = fs::write(&out, html) {
