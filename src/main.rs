@@ -119,7 +119,33 @@ fn run(args: RunArgs) {
         }
     }
 
-    let target_pid = args.pid.map(|p| p as u32);
+    let mut child = None;
+    let mut target_pid = args.pid.map(|p| p as u32);
+    if target_pid.is_none() && !args.command.is_empty() {
+        let mut cmd = std::process::Command::new(&args.command[0]);
+        if args.command.len() > 1 {
+            cmd.args(&args.command[1..]);
+        }
+        match cmd.spawn() {
+            Ok(c) => {
+                target_pid = Some(c.id());
+                child = Some(c);
+                info!("spawned {} as pid {}", args.command[0], target_pid.unwrap());
+            }
+            Err(e) => {
+                warn!("failed to spawn {}: {}", args.command[0], e);
+                return;
+            }
+        }
+    }
+
+    if let Some(pid) = target_pid {
+        if fs::metadata(format!("/proc/{}", pid)).is_err() {
+            warn!("pid {} not found", pid);
+            return;
+        }
+    }
+
     let target_uid = config.filter.target_user.as_deref().and_then(uid_from_name);
 
     let interval = config.monitor.interval_sec.unwrap_or(0);
@@ -162,6 +188,15 @@ fn run(args: RunArgs) {
             compress,
             verbose,
         );
+        if let Some(ref mut c) = child {
+            if c.try_wait().ok().flatten().is_some() {
+                break;
+            }
+        } else if let Some(pid) = target_pid {
+            if fs::metadata(format!("/proc/{}", pid)).is_err() {
+                break;
+            }
+        }
         if term.load(Ordering::SeqCst) {
             break;
         }
@@ -177,6 +212,9 @@ fn run(args: RunArgs) {
         if term.load(Ordering::SeqCst) {
             break;
         }
+    }
+    if let Some(mut c) = child {
+        let _ = c.wait();
     }
 }
 
@@ -215,7 +253,11 @@ fn monitor_iteration(
 
 fn collect_pids(target_pid: Option<u32>, target_uid: Option<u32>) -> Vec<u32> {
     let mut pids = if let Some(pid) = target_pid {
-        vec![pid]
+        if fs::metadata(format!("/proc/{}", pid)).is_ok() {
+            vec![pid]
+        } else {
+            Vec::new()
+        }
     } else {
         read_pids()
     };
