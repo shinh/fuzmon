@@ -4,7 +4,6 @@ use std::{thread, time::Duration};
 use tempfile::{NamedTempFile, TempDir};
 use zstd::stream;
 
-#[allow(dead_code)]
 pub fn wait_until_file_appears(logdir: &TempDir, pid: u32) {
     let plain = logdir.path().join(format!("{pid}.jsonl"));
     let zst = logdir.path().join(format!("{pid}.jsonl.zst"));
@@ -16,7 +15,7 @@ pub fn wait_until_file_appears(logdir: &TempDir, pid: u32) {
     }
 }
 
-#[allow(dead_code)]
+
 pub fn create_config(threshold: f64) -> NamedTempFile {
     let cfg_file = NamedTempFile::new().expect("cfg");
     fs::write(
@@ -30,7 +29,6 @@ pub fn create_config(threshold: f64) -> NamedTempFile {
     cfg_file
 }
 
-#[allow(dead_code)]
 pub fn run_fuzmon_and_check(pid: u32, log_dir: &TempDir, expected: &[&str]) {
     let pid_s = pid.to_string();
 

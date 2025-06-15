@@ -244,7 +244,7 @@ fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
     addrs.push(regs.rip as u64);
 
     for _ in 0..max_frames {
-        if rbp == 0 {
+        if rbp == 0 || rbp >= 0xfffffffffffffff8 {
             break;
         }
         let next_rip = ptrace::read(pid, (rbp + 8) as ptrace::AddressType)? as u64;
