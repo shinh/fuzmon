@@ -191,3 +191,69 @@ foo()
     let trace = fs::read_to_string(trace_path).unwrap();
     assert!(trace.contains("traceEvents"), "{}", trace);
 }
+
+#[test]
+fn trace_html_linked() {
+    use fuzmon::test_utils::run_fuzmon;
+    use fuzmon::utils::current_date_string;
+    use std::io::{BufRead, BufReader, Write};
+
+    let dir = tempdir().expect("dir");
+    let script = dir.path().join("test.py");
+    fs::write(
+        &script,
+        r#"print('ready', flush=True)
+import sys
+sys.stdin.readline()
+"#,
+    )
+    .unwrap();
+
+    let mut child = Command::new("python3")
+        .arg(&script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn python");
+    let mut child_in = child.stdin.take().unwrap();
+    let mut child_out = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    child_out.read_line(&mut line).unwrap();
+    assert_eq!(line.trim(), "ready");
+
+    let pid = child.id();
+    let logdir = tempdir().expect("logdir");
+    run_fuzmon(env!("CARGO_BIN_EXE_fuzmon"), pid, &logdir);
+
+    child_in.write_all(b"\n").unwrap();
+    drop(child_in);
+    let _ = child.wait();
+
+    let date = current_date_string();
+    let base = logdir.path().join(&date).join(format!("{pid}.jsonl"));
+    let log_path = if base.exists() {
+        base
+    } else {
+        base.with_extension("jsonl.zst")
+    };
+
+    let outdir = tempdir().expect("outdir");
+    let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+        .args([
+            "report",
+            log_path.to_str().unwrap(),
+            "-o",
+            outdir.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("run report");
+    assert!(out.status.success());
+    let html_path = outdir.path().join(format!("{pid}_trace.html"));
+    assert!(html_path.exists());
+    let report_html = fs::read_to_string(outdir.path().join("index.html")).unwrap();
+    assert!(
+        report_html.contains(&format!("{}_trace.html", pid)),
+        "{}",
+        report_html
+    );
+}
