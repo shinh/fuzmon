@@ -273,11 +273,7 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
 fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
     let ext = if use_msgpack { "msgpacks" } else { "jsonl" };
     let base = format!("{}/{}.{}", dir.trim_end_matches('/'), entry.pid, ext);
-    let path = if compress {
-        format!("{}.zst", base)
-    } else {
-        base
-    };
+    let path = if compress { format!("{}.zst", base) } else { base };
     match OpenOptions::new().create(true).append(true).open(&path) {
         Ok(file) => {
             if compress {
@@ -320,6 +316,7 @@ fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
         Err(e) => warn!("open {} failed: {}", path, e),
     }
 }
+
 
 fn read_log_entries(path: &Path) -> io::Result<Vec<LogEntry>> {
     let file = fs::File::open(path)?;
