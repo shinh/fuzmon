@@ -13,7 +13,7 @@ mod stacktrace;
 use crate::config::{parse_args, load_config, merge_config, uid_from_name, CmdArgs};
 use crate::procinfo::{
     read_pids, pid_uid, get_proc_usage, ProcState, should_suppress, process_name,
-    proc_cpu_time_sec, proc_cpu_jiffies, vsz_kb, swap_kb,
+    proc_cpu_time_sec, proc_cpu_jiffies, vsz_kb, swap_kb, detect_fd_events,
 };
 use crate::stacktrace::{capture_stack_trace, capture_python_stack_trace};
 
@@ -33,6 +33,15 @@ struct LogEntry {
     memory: MemoryInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     stacktrace: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+struct FdLogEvent {
+    timestamp: String,
+    pid: u32,
+    fd: i32,
+    event: String,
+    path: String,
 }
 
 fn main() {
@@ -124,6 +133,41 @@ fn monitor_iteration(
             continue;
         }
         let state = states.entry(*pid).or_default();
+        let fd_events = detect_fd_events(*pid, state);
+        if let Some(dir) = output_dir {
+            for ev in &fd_events {
+                if let Some(old_path) = &ev.old_path {
+                    let entry = FdLogEvent {
+                        timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                        pid: *pid,
+                        fd: ev.fd,
+                        event: "close".into(),
+                        path: old_path.clone(),
+                    };
+                    if verbose {
+                        if let Ok(line) = serde_json::to_string(&entry) {
+                            println!("{}", line);
+                        }
+                    }
+                    write_fd_event(dir, &entry, use_msgpack);
+                }
+                if let Some(new_path) = &ev.new_path {
+                    let entry = FdLogEvent {
+                        timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                        pid: *pid,
+                        fd: ev.fd,
+                        event: "open".into(),
+                        path: new_path.clone(),
+                    };
+                    if verbose {
+                        if let Ok(line) = serde_json::to_string(&entry) {
+                            println!("{}", line);
+                        }
+                    }
+                    write_fd_event(dir, &entry, use_msgpack);
+                }
+            }
+        }
         if let Some((cpu, rss)) = get_proc_usage(*pid, state) {
             if verbose && !should_suppress(cpu, rss) {
                 println!("PID {:>5}: {:>5.1}% CPU, {:>8} KB RSS", pid, cpu, rss);
@@ -194,6 +238,18 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64) -> LogEntry {
 }
 
 fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool) {
+    let path = format!("{}/{}.log", dir.trim_end_matches('/'), entry.pid);
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+        if use_msgpack {
+            let _ = write_named(&mut file, entry);
+        } else {
+            let _ = serde_json::to_writer(&mut file, entry);
+            let _ = file.write_all(b"\n");
+        }
+    }
+}
+
+fn write_fd_event(dir: &str, entry: &FdLogEvent, use_msgpack: bool) {
     let path = format!("{}/{}.log", dir.trim_end_matches('/'), entry.pid);
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
         if use_msgpack {

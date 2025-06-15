@@ -91,7 +91,7 @@ fn symbolized_stack_trace_contains_function_g1() {
 }
 
 #[test]
-fn symbolized_stack_trace_contains_function_O2() {
+fn symbolized_stack_trace_contains_function_o2() {
     run_symbol_test(
         &["-g", "-O2"],
         &["target_function", "main", "sleep", "testprog.c"],
