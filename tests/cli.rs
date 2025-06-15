@@ -6,7 +6,7 @@ use tempfile::tempdir;
 fn dump_outputs_entries() {
     let dir = tempdir().expect("tempdir");
     let log_path = dir.path().join("1.jsonl");
-    fs::write(&log_path, "{\"timestamp\":\"0\",\"pid\":1,\"process_name\":\"t\",\"cpu_time_sec\":0,\"memory\":{\"rss_kb\":0,\"vsz_kb\":0,\"swap_kb\":0}}\n").unwrap();
+    fs::write(&log_path, "{\"timestamp\":\"0\",\"pid\":1,\"process_name\":\"t\",\"cpu_time_percent\":0,\"memory\":{\"rss_kb\":0,\"vsz_kb\":0,\"swap_kb\":0}}\n").unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
         .args(["dump", log_path.to_str().unwrap()])
