@@ -48,6 +48,9 @@ fn html_report_has_stats() {
     assert!(html.contains("Average CPU usage"), "{}", html);
     assert!(html.contains("2000"), "{}", html);
     assert!(html.contains("REPORT_VAR"), "{}", html);
+    assert!(html.contains("<img"), "{}", html);
+    assert!(outdir.path().join(format!("{pid}_cpu.svg")).exists());
+    assert!(outdir.path().join(format!("{pid}_rss.svg")).exists());
 }
 
 #[test]
@@ -93,4 +96,8 @@ fn html_report_directory() {
     assert!(pos1 < pos2, "order: {}", html);
     assert!(outdir.path().join("1111.html").exists());
     assert!(outdir.path().join("2222.html").exists());
+    assert!(outdir.path().join("1111_cpu.svg").exists());
+    assert!(outdir.path().join("1111_rss.svg").exists());
+    assert!(outdir.path().join("2222_cpu.svg").exists());
+    assert!(outdir.path().join("2222_rss.svg").exists());
 }

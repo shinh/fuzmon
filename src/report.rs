@@ -3,6 +3,7 @@ use html_escape::encode_text;
 use log::warn;
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::config::{ReportArgs, finalize_report_config, load_config};
@@ -84,6 +85,77 @@ fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
+enum GraphField {
+    Cpu,
+    Rss,
+}
+
+fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut sorted: Vec<&LogEntry> = entries.iter().collect();
+    sorted.sort_by_key(|e| e.timestamp.clone());
+    let start = chrono::DateTime::parse_from_rfc3339(&sorted[0].timestamp)
+        .map(|t| t.with_timezone(&Utc))
+        .unwrap()
+        .timestamp() as f64;
+    let end = chrono::DateTime::parse_from_rfc3339(&sorted.last().unwrap().timestamp)
+        .map(|t| t.with_timezone(&Utc))
+        .unwrap()
+        .timestamp() as f64;
+    let total = (end - start).max(1.0);
+
+    let width = 400.0;
+    let height = 100.0;
+
+    let mut max_val = 0.0;
+    for e in &sorted {
+        let v = match field {
+            GraphField::Cpu => e.cpu_time_percent,
+            GraphField::Rss => e.memory.rss_kb as f64,
+        };
+        if v > max_val {
+            max_val = v;
+        }
+    }
+    if max_val <= 0.0 {
+        max_val = 1.0;
+    }
+    let mut points = String::new();
+    for e in &sorted {
+        let t = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
+            .map(|tt| tt.with_timezone(&Utc))
+            .unwrap()
+            .timestamp() as f64;
+        let x = (t - start) * width / total;
+        let v = match field {
+            GraphField::Cpu => e.cpu_time_percent,
+            GraphField::Rss => e.memory.rss_kb as f64,
+        };
+        let y = height - v * height / max_val;
+        points.push_str(&format!("{:.1},{:.1} ", x, y));
+    }
+    let svg = format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='{w}' height='{h}'><polyline fill='none' stroke='blue' stroke-width='1' points='{p}' /></svg>",
+        w = width,
+        h = height,
+        p = points.trim_end()
+    );
+    fs::write(out, svg)
+}
+
+fn write_graphs(entries: &[LogEntry], out_dir: &Path, pid: u32) {
+    let cpu_path = out_dir.join(format!("{}_cpu.svg", pid));
+    if let Err(e) = write_svg(entries, &cpu_path, GraphField::Cpu) {
+        warn!("failed to write {}: {}", cpu_path.display(), e);
+    }
+    let rss_path = out_dir.join(format!("{}_rss.svg", pid));
+    if let Err(e) = write_svg(entries, &rss_path, GraphField::Rss) {
+        warn!("failed to write {}: {}", rss_path.display(), e);
+    }
+}
+
 fn render_single(s: &Stats) -> String {
     let mut out = String::new();
     out.push_str("<html><body>\n");
@@ -105,6 +177,14 @@ fn render_single(s: &Stats) -> String {
     } else {
         out.push_str("<p>Environment: unknown</p>\n");
     }
+    out.push_str(&format!(
+        "<p><img src=\"{}_cpu.svg\" alt=\"CPU usage\" /></p>\n",
+        s.pid
+    ));
+    out.push_str(&format!(
+        "<p><img src=\"{}_rss.svg\" alt=\"RSS\" /></p>\n",
+        s.pid
+    ));
     out.push_str("</body></html>\n");
     out
 }
@@ -140,6 +220,7 @@ fn report_file(path: &Path, out_dir: &Path) {
     match read_log_entries(path) {
         Ok(entries) => {
             if let Some(s) = calc_stats(path, &entries) {
+                write_graphs(&entries, out_dir, s.pid);
                 let html = render_single(&s);
                 let index = out_dir.join("index.html");
                 if let Err(e) = fs::write(&index, html) {
@@ -219,6 +300,7 @@ fn report_dir(path: &Path, out_dir: &Path, top_cpu: usize, top_rss: usize) {
         match read_log_entries(Path::new(&s.path)) {
             Ok(entries) => {
                 if let Some(stats) = calc_stats(Path::new(&s.path), &entries) {
+                    write_graphs(&entries, out_dir, s.pid);
                     let html = render_single(&stats);
                     let out = out_dir.join(format!("{}.html", s.pid));
                     if let Err(e) = fs::write(&out, html) {
