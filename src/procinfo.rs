@@ -34,6 +34,11 @@ fn read_proc_stat(pid: u32) -> Option<(u64, u64)> {
     Some((utime, stime))
 }
 
+pub fn proc_cpu_jiffies(pid: u32) -> Option<u64> {
+    let (u, s) = read_proc_stat(pid)?;
+    Some(u + s)
+}
+
 fn read_status_value(pid: u32, key: &str) -> Option<u64> {
     let status = fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
     for line in status.lines() {

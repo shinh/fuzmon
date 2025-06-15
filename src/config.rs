@@ -39,6 +39,8 @@ pub struct OutputConfig {
 pub struct MonitorConfig {
     #[serde(default)]
     pub interval_sec: Option<u64>,
+    #[serde(default)]
+    pub cpu_time_jiffies_threshold: Option<u64>,
 }
 
 #[derive(Default, Deserialize)]
@@ -81,6 +83,9 @@ pub fn merge_config(mut cfg: Config, args: &CmdArgs) -> Config {
     if cfg.output.path.is_none() {
         cfg.output.path = Some("/tmp/fuzmon".into());
     }
+    if cfg.monitor.cpu_time_jiffies_threshold.is_none() {
+        cfg.monitor.cpu_time_jiffies_threshold = Some(1);
+    }
     cfg
 }
 
@@ -100,6 +105,7 @@ mod tests {
         assert_eq!(cfg.output.format.as_deref(), Some("json"));
         assert_eq!(cfg.output.path.as_deref(), Some("/var/log/fuzmon/"));
         assert_eq!(cfg.monitor.interval_sec, Some(60));
+        assert_eq!(cfg.monitor.cpu_time_jiffies_threshold, Some(1));
         assert_eq!(cfg.filter.target_user.as_deref(), Some("myname"));
     }
 
@@ -128,6 +134,7 @@ mod tests {
         let args = CmdArgs::default();
         let merged = merge_config(cfg, &args);
         assert_eq!(merged.output.path.as_deref(), Some("/tmp/fuzmon"));
+        assert_eq!(merged.monitor.cpu_time_jiffies_threshold, Some(1));
     }
 }
 

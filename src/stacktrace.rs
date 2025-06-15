@@ -3,6 +3,9 @@ use std::fs;
 use addr2line::Loader;
 use nix::sys::{ptrace, wait::waitpid};
 use nix::unistd::Pid;
+use py_spy::{Config as PySpyConfig, PythonSpy};
+use crate::procinfo::process_name;
+
 
 pub struct ExeInfo {
     pub start: u64,
@@ -100,6 +103,17 @@ fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
 }
 
 pub fn attach_and_trace(pid: i32) -> nix::Result<()> {
+    if let Some(name) = process_name(pid as u32) {
+        if name.starts_with("python") {
+            if let Ok(trace) = capture_python_stack_trace(pid) {
+                println!("Stack trace for pid {}:", pid);
+                for line in trace {
+                    println!("{}", line);
+                }
+                return Ok(());
+            }
+        }
+    }
     let trace = capture_stack_trace(pid)?;
     println!("Stack trace for pid {}:", pid);
     for line in trace {
@@ -134,4 +148,18 @@ pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
 
     let _ = ptrace::detach(target, None);
     res
+}
+
+pub fn capture_python_stack_trace(pid: i32) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let config = PySpyConfig::default();
+    let mut spy = PythonSpy::new(pid as py_spy::Pid, &config)?;
+    let traces = spy.get_stack_traces()?;
+    let mut lines = Vec::new();
+    for t in traces {
+        lines.push(format!("thread {}", t.thread_id));
+        for f in t.frames {
+            lines.push(format!("    {} {}:{}", f.name, f.filename, f.line));
+        }
+    }
+    Ok(lines)
 }
