@@ -1,12 +1,11 @@
+use addr2line::Loader;
+use nix::sys::{ptrace, wait::waitpid};
+use nix::unistd::Pid;
+use object::{Object, ObjectKind};
+use py_spy::{Config as PySpyConfig, PythonSpy};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
-use addr2line::Loader;
-use object::{Object, ObjectKind};
-use nix::sys::{ptrace, wait::waitpid};
-use nix::unistd::Pid;
-use py_spy::{Config as PySpyConfig, PythonSpy};
-
 
 pub struct ExeInfo {
     pub start: u64,
@@ -20,7 +19,6 @@ pub struct Module {
     pub is_pic: bool,
 }
 
-
 pub fn load_loaders(pid: i32) -> Vec<Module> {
     let maps = match fs::read_to_string(format!("/proc/{}/maps", pid)) {
         Ok(m) => m,
@@ -29,12 +27,24 @@ pub fn load_loaders(pid: i32) -> Vec<Module> {
     let mut infos: HashMap<String, ExeInfo> = HashMap::new();
     for line in maps.lines() {
         let mut parts = line.split_whitespace();
-        let range = match parts.next() { Some(v) => v, None => continue };
-        let _perms = match parts.next() { Some(v) => v, None => continue };
-        let offset = match parts.next() { Some(v) => v, None => continue };
+        let range = match parts.next() {
+            Some(v) => v,
+            None => continue,
+        };
+        let _perms = match parts.next() {
+            Some(v) => v,
+            None => continue,
+        };
+        let offset = match parts.next() {
+            Some(v) => v,
+            None => continue,
+        };
         let _dev = parts.next();
         let _inode = parts.next();
-        let path = match parts.next() { Some(v) => v, None => continue };
+        let path = match parts.next() {
+            Some(v) => v,
+            None => continue,
+        };
         if let Some((start, end)) = range.split_once('-') {
             if let (Ok(start_addr), Ok(end_addr), Ok(off)) = (
                 u64::from_str_radix(start, 16),
@@ -62,7 +72,11 @@ pub fn load_loaders(pid: i32) -> Vec<Module> {
             if let Ok(data) = fs::read(&path) {
                 if let Ok(obj) = object::File::parse(&*data) {
                     let is_pic = matches!(obj.kind(), ObjectKind::Dynamic);
-                    modules.push(Module { loader, info, is_pic });
+                    modules.push(Module {
+                        loader,
+                        info,
+                        is_pic,
+                    });
                 }
             }
         }
@@ -108,7 +122,11 @@ fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64, is_pic: bool) -> Op
             info_str.push_str(sym);
         }
     }
-    if info_str.is_empty() { None } else { Some(info_str) }
+    if info_str.is_empty() {
+        None
+    } else {
+        Some(info_str)
+    }
 }
 
 fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
@@ -132,7 +150,6 @@ fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
 
     Ok(addrs)
 }
-
 
 pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
     let target = Pid::from_raw(pid);
@@ -180,7 +197,9 @@ pub fn capture_stack_traces(pid: i32) -> Vec<Option<Vec<String>>> {
     traces
 }
 
-pub fn capture_python_stack_traces(pid: i32) -> Result<Vec<Option<Vec<String>>>, Box<dyn std::error::Error>> {
+pub fn capture_python_stack_traces(
+    pid: i32,
+) -> Result<Vec<Option<Vec<String>>>, Box<dyn std::error::Error>> {
     let config = PySpyConfig::default();
     let mut spy = PythonSpy::new(pid as py_spy::Pid, &config)?;
     let traces = spy.get_stack_traces()?;
