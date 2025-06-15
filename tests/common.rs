@@ -3,6 +3,7 @@ use std::{thread, time::Duration};
 use std::fs;
 use zstd::stream;
 
+#[allow(dead_code)]
 pub fn run_fuzmon_and_check(args: &[&str], expected: &[&str]) {
     let log_dir = args.iter()
         .position(|&a| a == "-o")

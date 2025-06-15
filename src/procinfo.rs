@@ -1,11 +1,13 @@
 use std::fs;
 use std::os::unix::fs::MetadataExt;
+use std::collections::HashMap;
 use nix::libc;
 
 #[derive(Default)]
 pub struct ProcState {
     pub prev_proc_time: u64,
     pub prev_total_time: u64,
+    pub fds: HashMap<i32, String>,
 }
 
 pub fn pid_uid(pid: u32) -> Option<u32> {
@@ -37,6 +39,62 @@ fn read_proc_stat(pid: u32) -> Option<(u64, u64)> {
 pub fn proc_cpu_jiffies(pid: u32) -> Option<u64> {
     let (u, s) = read_proc_stat(pid)?;
     Some(u + s)
+}
+
+pub fn read_fd_map(pid: u32) -> HashMap<i32, String> {
+    let mut map = HashMap::new();
+    if let Ok(entries) = fs::read_dir(format!("/proc/{}/fd", pid)) {
+        for entry in entries.flatten() {
+            if let Ok(name) = entry.file_name().into_string() {
+                if let Ok(fd) = name.parse::<i32>() {
+                    if let Ok(target) = fs::read_link(entry.path()) {
+                        if let Some(path) = target.to_str() {
+                            map.insert(fd, path.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+#[derive(Debug)]
+pub struct FdEvent {
+    pub fd: i32,
+    pub old_path: Option<String>,
+    pub new_path: Option<String>,
+}
+
+pub fn detect_fd_events(pid: u32, state: &mut ProcState) -> Vec<FdEvent> {
+    let current = read_fd_map(pid);
+    let mut events = Vec::new();
+    for (fd, old_path) in &state.fds {
+        match current.get(fd) {
+            None => events.push(FdEvent {
+                fd: *fd,
+                old_path: Some(old_path.clone()),
+                new_path: None,
+            }),
+            Some(new_path) if new_path != old_path => events.push(FdEvent {
+                fd: *fd,
+                old_path: Some(old_path.clone()),
+                new_path: Some(new_path.clone()),
+            }),
+            _ => {}
+        }
+    }
+    for (fd, new_path) in &current {
+        if !state.fds.contains_key(fd) {
+            events.push(FdEvent {
+                fd: *fd,
+                old_path: None,
+                new_path: Some(new_path.clone()),
+            });
+        }
+    }
+    state.fds = current;
+    events
 }
 
 fn read_status_value(pid: u32, key: &str) -> Option<u64> {
