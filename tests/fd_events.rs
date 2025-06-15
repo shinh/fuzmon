@@ -1,8 +1,9 @@
-use std::process::{Command, Stdio};
+use std::fs;
 use std::io::Write;
+use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
 use tempfile::tempdir;
-use std::fs;
+use zstd::stream;
 
 mod common;
 
@@ -36,14 +37,21 @@ sys.stdin.readline()
 
     let logdir = tempdir().expect("logdir");
     let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
-        .args(["run", "-p", &pid.to_string(), "-o", logdir.path().to_str().unwrap()])
+        .args([
+            "run",
+            "-p",
+            &pid.to_string(),
+            "-o",
+            logdir.path().to_str().unwrap(),
+        ])
         .stdout(Stdio::null())
         .spawn()
         .expect("run fuzmon");
 
-    let log_path = logdir.path().join(format!("{}.jsonl", pid));
+    let plain = logdir.path().join(format!("{}.jsonl", pid));
+    let zst = logdir.path().join(format!("{}.jsonl.zst", pid));
     for _ in 0..50 {
-        if log_path.exists() {
+        if plain.exists() || zst.exists() {
             break;
         }
         thread::sleep(Duration::from_millis(10));
@@ -53,11 +61,21 @@ sys.stdin.readline()
     child_in.flush().unwrap();
 
     for _ in 0..50 {
-        if log_path.exists() {
-            if let Ok(s) = fs::read_to_string(&log_path) {
-                if s.contains("\"event\":\"open\"") && s.contains(file_path.to_str().unwrap()) {
-                    break;
+        let path = if plain.exists() { &plain } else { &zst };
+        if path.exists() {
+            let content = if path.extension().and_then(|e| e.to_str()) == Some("zst") {
+                let data = fs::read(path).unwrap();
+                match stream::decode_all(&*data) {
+                    Ok(d) => String::from_utf8_lossy(&d).into_owned(),
+                    Err(_) => String::new(),
                 }
+            } else {
+                fs::read_to_string(path).unwrap_or_default()
+            };
+            if content.contains("\"event\":\"open\"")
+                && content.contains(file_path.to_str().unwrap())
+            {
+                break;
             }
         }
         thread::sleep(Duration::from_millis(10));
@@ -67,8 +85,18 @@ sys.stdin.readline()
     child_in.flush().unwrap();
 
     for _ in 0..50 {
-        if let Ok(s) = fs::read_to_string(&log_path) {
-            if s.contains("\"event\":\"close\"") {
+        let path = if plain.exists() { &plain } else { &zst };
+        if path.exists() {
+            let content = if path.extension().and_then(|e| e.to_str()) == Some("zst") {
+                let data = fs::read(path).unwrap();
+                match stream::decode_all(&*data) {
+                    Ok(d) => String::from_utf8_lossy(&d).into_owned(),
+                    Err(_) => String::new(),
+                }
+            } else {
+                fs::read_to_string(path).unwrap_or_default()
+            };
+            if content.contains("\"event\":\"close\"") {
                 break;
             }
         }
@@ -82,10 +110,26 @@ sys.stdin.readline()
     let _ = mon.kill();
     let _ = mon.wait();
 
-    let log_content = fs::read_to_string(&log_path).unwrap_or_default();
+    let path = if plain.exists() { &plain } else { &zst };
+    let log_content = if path.extension().and_then(|e| e.to_str()) == Some("zst") {
+        let data = fs::read(path).unwrap();
+        match stream::decode_all(&*data) {
+            Ok(d) => String::from_utf8_lossy(&d).into_owned(),
+            Err(_) => String::new(),
+        }
+    } else {
+        fs::read_to_string(path).unwrap_or_default()
+    };
     let logfile = file_path.to_str().unwrap();
-    assert!(log_content.contains("\"event\":\"open\""), "{}", log_content);
+    assert!(
+        log_content.contains("\"event\":\"open\""),
+        "{}",
+        log_content
+    );
     assert!(log_content.contains(logfile), "{}", log_content);
-    assert!(log_content.contains("\"event\":\"close\""), "{}", log_content);
+    assert!(
+        log_content.contains("\"event\":\"close\""),
+        "{}",
+        log_content
+    );
 }
-

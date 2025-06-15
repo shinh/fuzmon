@@ -1,24 +1,24 @@
-use std::{thread::sleep, time::Duration, collections::HashMap};
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write, BufRead, BufReader};
-use std::path::Path;
-use serde::{Serialize, Deserialize};
-use regex::Regex;
 use chrono::Utc;
+use regex::Regex;
+use rmp_serde::decode::{Error as MsgpackError, from_read as read_msgpack};
 use rmp_serde::encode::write_named;
-use rmp_serde::decode::{from_read as read_msgpack, Error as MsgpackError};
+use serde::{Deserialize, Serialize};
+use std::fs::{self, OpenOptions};
+use std::io::{self, BufRead, BufReader, Write};
+use std::path::Path;
+use std::{collections::HashMap, thread::sleep, time::Duration};
 
 mod config;
 mod procinfo;
 mod stacktrace;
 
-use crate::config::{parse_cli, load_config, merge_config, uid_from_name, Cli, Commands, RunArgs};
-use clap::CommandFactory;
+use crate::config::{Cli, Commands, RunArgs, load_config, merge_config, parse_cli, uid_from_name};
 use crate::procinfo::{
-    read_pids, pid_uid, get_proc_usage, ProcState, should_suppress, process_name,
-    proc_cpu_time_sec, proc_cpu_jiffies, vsz_kb, swap_kb, detect_fd_events,
+    ProcState, detect_fd_events, get_proc_usage, pid_uid, proc_cpu_jiffies, proc_cpu_time_sec,
+    process_name, read_pids, should_suppress, swap_kb, vsz_kb,
 };
-use crate::stacktrace::{capture_stack_trace, capture_python_stack_trace};
+use crate::stacktrace::{capture_python_stack_trace, capture_stack_trace};
+use clap::CommandFactory;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct MemoryInfo {
@@ -76,8 +76,15 @@ fn run(args: RunArgs) {
         .filter_map(|p| Regex::new(&p).ok())
         .collect();
 
-    let use_msgpack = matches!(config.output.format.as_deref(), Some("msgpack"));
-    let compress = config.output.compress.unwrap_or(false);
+    let format = config.output.format.as_deref().unwrap_or("jsonl.zst");
+    let use_msgpack = matches!(
+        format,
+        "msgpack" | "msgpacks" | "msgpacks.zst" | "msgpack.zst"
+    );
+    let compress = config
+        .output
+        .compress
+        .unwrap_or_else(|| format.ends_with(".zst"));
     let verbose = args.verbose;
 
     let output_dir = config.output.path.as_deref();
@@ -86,11 +93,7 @@ fn run(args: RunArgs) {
     }
 
     let target_pid = args.pid.map(|p| p as u32);
-    let target_uid = config
-        .filter
-        .target_user
-        .as_deref()
-        .and_then(uid_from_name);
+    let target_uid = config.filter.target_user.as_deref().and_then(uid_from_name);
 
     let interval = config.monitor.interval_sec.unwrap_or(0);
     let sleep_dur = if interval == 0 {
@@ -220,7 +223,11 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
             vsz_kb: vsz_kb(pid).unwrap_or(0),
             swap_kb: swap_kb(pid).unwrap_or(0),
         },
-        fd_events: if fd_events.is_empty() { None } else { Some(fd_events) },
+        fd_events: if fd_events.is_empty() {
+            None
+        } else {
+            Some(fd_events)
+        },
         stacktrace: None,
     };
     if cpu < 1.0 {
@@ -242,9 +249,13 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
 }
 
 fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
-    let ext = if use_msgpack { "msgs" } else { "jsonl" };
+    let ext = if use_msgpack { "msgpacks" } else { "jsonl" };
     let base = format!("{}/{}.{}", dir.trim_end_matches('/'), entry.pid, ext);
-    let path = if compress { format!("{}.zst", base) } else { base };
+    let path = if compress {
+        format!("{}.zst", base)
+    } else {
+        base
+    };
     if let Ok(file) = OpenOptions::new().create(true).append(true).open(&path) {
         if compress {
             if let Ok(mut enc) = zstd::Encoder::new(file, 0) {
@@ -282,10 +293,13 @@ fn read_log_entries(path: &Path) -> io::Result<Vec<LogEntry>> {
         if is_zst {
             base.set_extension("");
         }
-        base.extension().and_then(|e| e.to_str()).unwrap_or("").to_string()
+        base.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string()
     };
 
-    if ext == "msgs" {
+    if ext == "msgpacks" {
         let mut r = reader;
         let mut entries = Vec::new();
         loop {
@@ -295,7 +309,7 @@ fn read_log_entries(path: &Path) -> io::Result<Vec<LogEntry>> {
                 | Err(MsgpackError::InvalidDataRead(ref ioe))
                     if ioe.kind() == io::ErrorKind::UnexpectedEof =>
                 {
-                    break
+                    break;
                 }
                 Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e)),
             }
@@ -345,4 +359,3 @@ fn dump_file(path: &Path) {
         Err(e) => eprintln!("failed to read {}: {}", path.display(), e),
     }
 }
-

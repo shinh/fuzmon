@@ -109,7 +109,7 @@ pub fn merge_config(mut cfg: Config, args: &RunArgs) -> Config {
         cfg.output.path = Some("/tmp/fuzmon".into());
     }
     if cfg.output.compress.is_none() {
-        cfg.output.compress = Some(false);
+        cfg.output.compress = Some(true);
     }
     if cfg.monitor.cpu_time_jiffies_threshold.is_none() {
         cfg.monitor.cpu_time_jiffies_threshold = Some(1);
@@ -124,8 +124,8 @@ pub fn parse_cli() -> Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::fs;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn load_example_config() {
@@ -163,8 +163,7 @@ mod tests {
         let args = RunArgs::default();
         let merged = merge_config(cfg, &args);
         assert_eq!(merged.output.path.as_deref(), Some("/tmp/fuzmon"));
-        assert_eq!(merged.output.compress, Some(false));
+        assert_eq!(merged.output.compress, Some(true));
         assert_eq!(merged.monitor.cpu_time_jiffies_threshold, Some(1));
     }
 }
-
