@@ -16,11 +16,19 @@ pub enum Commands {
     Run(RunArgs),
     /// Dump logs
     Dump(DumpArgs),
+    /// Generate HTML report
+    Report(ReportArgs),
 }
 
 #[derive(Parser, Clone)]
 pub struct DumpArgs {
     /// Path to log file or directory
+    pub path: String,
+}
+
+#[derive(Parser, Clone)]
+pub struct ReportArgs {
+    /// Path to log file
     pub path: String,
 }
 
