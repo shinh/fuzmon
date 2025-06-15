@@ -11,12 +11,16 @@ fn run_symbol_test(flags: &[&str], expected: &[&str]) {
     fs::write(
         &src_path,
         r#"
+#include <stdio.h>
 #include <unistd.h>
 
 __attribute__((noinline))
 static void block_read() {
     char buf;
-    read(0, &buf, 1);
+    int r = read(0, &buf, 1);
+    if (r < 0) {
+       fprintf(stderr, "Read error: %d\\n", r);
+    }
 }
 
 __attribute__((noinline))
