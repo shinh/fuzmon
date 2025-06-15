@@ -1,8 +1,11 @@
 use chrono::Utc;
 use html_escape::encode_text;
 use log::warn;
+use plotters::prelude::*;
+use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::config::{ReportArgs, finalize_report_config, load_config};
@@ -84,6 +87,194 @@ fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
+enum GraphField {
+    Cpu,
+    Rss,
+}
+
+fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut sorted: Vec<&LogEntry> = entries.iter().collect();
+    sorted.sort_by_key(|e| e.timestamp.clone());
+    let start = chrono::DateTime::parse_from_rfc3339(&sorted[0].timestamp)
+        .map(|t| t.with_timezone(&Utc))
+        .unwrap();
+    let end = chrono::DateTime::parse_from_rfc3339(&sorted.last().unwrap().timestamp)
+        .map(|t| t.with_timezone(&Utc))
+        .unwrap();
+
+    let x_max = (end - start).num_seconds().max(1) as f64;
+    let mut max_val = 0.0f64;
+    let mut series = Vec::new();
+    for e in &sorted {
+        let t = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
+            .map(|tt| tt.with_timezone(&Utc))
+            .unwrap();
+        let x = (t - start).num_seconds() as f64;
+        let v = match field {
+            GraphField::Cpu => e.cpu_time_percent,
+            GraphField::Rss => e.memory.rss_kb as f64,
+        };
+        max_val = max_val.max(v);
+        series.push((x, v));
+    }
+    if max_val <= 0.0 {
+        max_val = 1.0;
+    }
+
+    let root = SVGBackend::new(out, (600, 300)).into_drawing_area();
+    root.fill(&WHITE)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let (y_desc, caption, scale) = match field {
+        GraphField::Cpu => ("CPU %", "CPU usage (%)", 1.0),
+        GraphField::Rss => {
+            if max_val >= 1024.0 * 1024.0 {
+                ("RSS GB", "Resident set size (GB)", 1024.0 * 1024.0)
+            } else {
+                ("RSS MB", "Resident set size (MB)", 1024.0)
+            }
+        }
+    };
+    let y_max = (max_val / scale).max(1.0);
+    let mut chart = ChartBuilder::on(&root)
+        .caption(caption, ("sans-serif", 20))
+        .margin(5)
+        .x_label_area_size(30)
+        .y_label_area_size(40)
+        .build_cartesian_2d(0f64..x_max, 0f64..y_max)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    chart
+        .configure_mesh()
+        .x_desc("time (s)")
+        .y_desc(y_desc)
+        .draw()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    chart
+        .draw_series(LineSeries::new(
+            series.into_iter().map(|(x, v)| (x, v / scale)),
+            &BLUE,
+        ))
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    root.present()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+}
+
+fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut sorted: Vec<&LogEntry> = entries.iter().collect();
+    sorted.sort_by_key(|e| e.timestamp.clone());
+    let mut events = Vec::new();
+    use std::collections::HashMap;
+    let mut active: HashMap<(u32, usize), (String, i64, u32)> = HashMap::new();
+    for (i, e) in sorted.iter().enumerate() {
+        if e.threads.is_empty() {
+            continue;
+        }
+        let dt = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
+            .map(|t| t.with_timezone(&Utc))
+            .map_err(|er| io::Error::new(io::ErrorKind::InvalidData, er))?;
+        let ts = dt.timestamp_micros();
+
+        for t in &e.threads {
+            let mut frames: Vec<String> = Vec::new();
+            if let Some(st) = &t.stacktrace {
+                frames.extend(st.iter().cloned());
+            }
+            if let Some(py) = &t.python_stacktrace {
+                frames.extend(py.iter().cloned());
+            }
+            if frames.is_empty() {
+                continue;
+            }
+            // handle existing events beyond current depth
+            let mut depth = frames.len();
+            loop {
+                let key = (t.tid, depth);
+                if let Some((name, start, pid)) = active.remove(&key) {
+                    let dur = ts - start;
+                    events.push(json!({
+                        "name": name,
+                        "ph": "X",
+                        "pid": pid,
+                        "tid": t.tid,
+                        "ts": start,
+                        "dur": if dur <= 0 { 1 } else { dur },
+                    }));
+                    depth += 1;
+                } else {
+                    break;
+                }
+            }
+
+            for (idx, name) in frames.into_iter().enumerate() {
+                let key = (t.tid, idx);
+                match active.get_mut(&key) {
+                    Some((cur, _start, _pid)) if cur == &name => {}
+                    Some((cur, start, pid)) => {
+                        let dur = ts - *start;
+                        events.push(json!({
+                            "name": cur,
+                            "ph": "X",
+                            "pid": *pid,
+                            "tid": t.tid,
+                            "ts": *start,
+                            "dur": if dur <= 0 { 1 } else { dur },
+                        }));
+                        *cur = name;
+                        *start = ts;
+                        *pid = e.pid;
+                    }
+                    None => {
+                        active.insert(key, (name, ts, e.pid));
+                    }
+                }
+            }
+        }
+
+        if i == sorted.len() - 1 {
+            let final_ts = ts;
+            for ((tid, _idx), (name, start, pid)) in active.drain() {
+                let dur = final_ts - start;
+                events.push(json!({
+                    "name": name,
+                    "ph": "X",
+                    "pid": pid,
+                    "tid": tid,
+                    "ts": start,
+                    "dur": if dur <= 0 { 1 } else { dur },
+                }));
+            }
+        }
+    }
+    if events.is_empty() {
+        return Ok(());
+    }
+    let obj = json!({ "traceEvents": events });
+    fs::write(out, serde_json::to_vec(&obj)?)
+}
+
+fn write_graphs(entries: &[LogEntry], out_dir: &Path, pid: u32) {
+    let cpu_path = out_dir.join(format!("{}_cpu.svg", pid));
+    if let Err(e) = write_svg(entries, &cpu_path, GraphField::Cpu) {
+        warn!("failed to write {}: {}", cpu_path.display(), e);
+    }
+    let rss_path = out_dir.join(format!("{}_rss.svg", pid));
+    if let Err(e) = write_svg(entries, &rss_path, GraphField::Rss) {
+        warn!("failed to write {}: {}", rss_path.display(), e);
+    }
+}
+
+fn write_trace(entries: &[LogEntry], out_dir: &Path, pid: u32) {
+    let path = out_dir.join(format!("{}_trace.json", pid));
+    if let Err(e) = write_chrome_trace(entries, &path) {
+        warn!("failed to write {}: {}", path.display(), e);
+    }
+}
+
 fn render_single(s: &Stats) -> String {
     let mut out = String::new();
     out.push_str("<html><body>\n");
@@ -105,6 +296,14 @@ fn render_single(s: &Stats) -> String {
     } else {
         out.push_str("<p>Environment: unknown</p>\n");
     }
+    out.push_str(&format!(
+        "<p>CPU usage<br><img src=\"{}_cpu.svg\" alt=\"CPU usage graph\" /></p>\n",
+        s.pid
+    ));
+    out.push_str(&format!(
+        "<p>RSS<br><img src=\"{}_rss.svg\" alt=\"RSS graph\" /></p>\n",
+        s.pid
+    ));
     out.push_str("</body></html>\n");
     out
 }
@@ -140,6 +339,8 @@ fn report_file(path: &Path, out_dir: &Path) {
     match read_log_entries(path) {
         Ok(entries) => {
             if let Some(s) = calc_stats(path, &entries) {
+                write_graphs(&entries, out_dir, s.pid);
+                write_trace(&entries, out_dir, s.pid);
                 let html = render_single(&s);
                 let index = out_dir.join("index.html");
                 if let Err(e) = fs::write(&index, html) {
@@ -219,6 +420,8 @@ fn report_dir(path: &Path, out_dir: &Path, top_cpu: usize, top_rss: usize) {
         match read_log_entries(Path::new(&s.path)) {
             Ok(entries) => {
                 if let Some(stats) = calc_stats(Path::new(&s.path), &entries) {
+                    write_graphs(&entries, out_dir, s.pid);
+                    write_trace(&entries, out_dir, s.pid);
                     let html = render_single(&stats);
                     let out = out_dir.join(format!("{}.html", s.pid));
                     if let Err(e) = fs::write(&out, html) {

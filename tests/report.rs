@@ -48,6 +48,9 @@ fn html_report_has_stats() {
     assert!(html.contains("Average CPU usage"), "{}", html);
     assert!(html.contains("2000"), "{}", html);
     assert!(html.contains("REPORT_VAR"), "{}", html);
+    assert!(html.contains("<img"), "{}", html);
+    assert!(outdir.path().join(format!("{pid}_cpu.svg")).exists());
+    assert!(outdir.path().join(format!("{pid}_rss.svg")).exists());
 }
 
 #[test]
@@ -93,4 +96,72 @@ fn html_report_directory() {
     assert!(pos1 < pos2, "order: {}", html);
     assert!(outdir.path().join("1111.html").exists());
     assert!(outdir.path().join("2222.html").exists());
+    assert!(outdir.path().join("1111_cpu.svg").exists());
+    assert!(outdir.path().join("1111_rss.svg").exists());
+    assert!(outdir.path().join("2222_cpu.svg").exists());
+    assert!(outdir.path().join("2222_rss.svg").exists());
+}
+
+#[test]
+fn trace_json_created_with_stacktrace() {
+    use fuzmon::test_utils::run_fuzmon;
+    use fuzmon::utils::current_date_string;
+    use std::io::{BufRead, BufReader, Write};
+
+    let dir = tempdir().expect("dir");
+    let script = dir.path().join("test.py");
+    fs::write(
+        &script,
+        r#"import sys
+def foo():
+    print('ready', flush=True)
+    sys.stdin.readline()
+foo()
+"#,
+    )
+    .unwrap();
+
+    let mut child = Command::new("python3")
+        .arg(&script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn python");
+    let mut child_in = child.stdin.take().unwrap();
+    let mut child_out = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    child_out.read_line(&mut line).unwrap();
+    assert_eq!(line.trim(), "ready");
+
+    let pid = child.id();
+    let logdir = tempdir().expect("logdir");
+    run_fuzmon(env!("CARGO_BIN_EXE_fuzmon"), pid, &logdir);
+
+    child_in.write_all(b"\n").unwrap();
+    drop(child_in);
+    let _ = child.wait();
+
+    let date = current_date_string();
+    let base = logdir.path().join(&date).join(format!("{pid}.jsonl"));
+    let log_path = if base.exists() {
+        base
+    } else {
+        base.with_extension("jsonl.zst")
+    };
+
+    let outdir = tempdir().expect("outdir");
+    let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+        .args([
+            "report",
+            log_path.to_str().unwrap(),
+            "-o",
+            outdir.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("run report");
+    assert!(out.status.success());
+    let trace_path = outdir.path().join(format!("{pid}_trace.json"));
+    assert!(trace_path.exists());
+    let trace = fs::read_to_string(trace_path).unwrap();
+    assert!(trace.contains("traceEvents"), "{}", trace);
 }
