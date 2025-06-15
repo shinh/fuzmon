@@ -15,13 +15,25 @@ pub struct MemoryInfo {
     pub swap_kb: u64,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Frame {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub addr: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub func: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<i32>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ThreadInfo {
     pub tid: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub stacktrace: Option<Vec<String>>,
+    pub stacktrace: Option<Vec<Frame>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub python_stacktrace: Option<Vec<String>>,
+    pub python_stacktrace: Option<Vec<Frame>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
