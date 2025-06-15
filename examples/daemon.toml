@@ -6,5 +6,5 @@ path = "/var/log/fuzmon/"
 compress = true
 
 [monitor]
-interval_sec = 60
+interval_sec = 1
 cpu_time_jiffies_threshold = 1  # record when CPU usage exceeds 1%
