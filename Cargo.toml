@@ -16,6 +16,7 @@ rmp-serde = "1"
 chrono = { version = "0.4", features = ["clock"] }
 toml = "0.8"
 clap = { version = "4", features = ["derive"] }
+zstd = "0.13"
 
 [dev-dependencies]
 tempfile = "3"

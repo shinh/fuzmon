@@ -57,6 +57,7 @@ fn run(args: CmdArgs) {
         .collect();
 
     let use_msgpack = matches!(config.output.format.as_deref(), Some("msgpack"));
+    let compress = config.output.compress.unwrap_or(false);
     let verbose = args.verbose;
 
     let output_dir = config.output.path.as_deref();
@@ -90,6 +91,7 @@ fn run(args: CmdArgs) {
             cpu_jiffies_threshold,
             output_dir,
             use_msgpack,
+            compress,
             verbose,
         );
         sleep(sleep_dur);
@@ -104,6 +106,7 @@ fn monitor_iteration(
     cpu_jiffies_threshold: u64,
     output_dir: Option<&str>,
     use_msgpack: bool,
+    compress: bool,
     verbose: bool,
 ) {
     let mut pids = if let Some(pid) = target_pid {
@@ -136,7 +139,7 @@ fn monitor_iteration(
                         println!("{}", line);
                     }
                 }
-                write_log(dir, &entry, use_msgpack);
+                write_log(dir, &entry, use_msgpack, compress);
             }
         }
     }
@@ -193,14 +196,28 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64) -> LogEntry {
     entry
 }
 
-fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool) {
-    let path = format!("{}/{}.log", dir.trim_end_matches('/'), entry.pid);
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-        if use_msgpack {
-            let _ = write_named(&mut file, entry);
+fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
+    let base = format!("{}/{}.log", dir.trim_end_matches('/'), entry.pid);
+    let path = if compress { format!("{}.zst", base) } else { base };
+    if let Ok(file) = OpenOptions::new().create(true).append(true).open(&path) {
+        if compress {
+            if let Ok(mut enc) = zstd::Encoder::new(file, 0) {
+                if use_msgpack {
+                    let _ = write_named(&mut enc, entry);
+                } else {
+                    let _ = serde_json::to_writer(&mut enc, entry);
+                    let _ = enc.write_all(b"\n");
+                }
+                let _ = enc.finish();
+            }
         } else {
-            let _ = serde_json::to_writer(&mut file, entry);
-            let _ = file.write_all(b"\n");
+            let mut file = file;
+            if use_msgpack {
+                let _ = write_named(&mut file, entry);
+            } else {
+                let _ = serde_json::to_writer(&mut file, entry);
+                let _ = file.write_all(b"\n");
+            }
         }
     }
 }
