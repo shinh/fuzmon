@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use std::fs;
+use toml::Value;
 
 #[derive(Parser)]
 #[command(name = "fuzmon")]
@@ -78,9 +79,15 @@ pub struct Config {
     pub monitor: MonitorConfig,
 }
 
-pub fn load_config(path: &str) -> Option<Config> {
-    let data = fs::read_to_string(path).ok()?;
-    toml::from_str(&data).ok()
+pub fn load_config(path: &str) -> Result<Config, String> {
+    let data = fs::read_to_string(path)
+        .map_err(|e| format!("failed to read {}: {}", path, e))?;
+    let value: Value = data
+        .parse()
+        .map_err(|e| format!("failed to parse {}: {}", path, e))?;
+    value
+        .try_into()
+        .map_err(|e| format!("failed to parse {}: {}", path, e))
 }
 
 pub fn uid_from_name(name: &str) -> Option<u32> {
@@ -165,5 +172,14 @@ mod tests {
         assert_eq!(merged.output.path.as_deref(), Some("/tmp/fuzmon"));
         assert_eq!(merged.output.compress, Some(true));
         assert_eq!(merged.monitor.cpu_time_jiffies_threshold, Some(1));
+    }
+
+    #[test]
+    fn invalid_config_returns_error() {
+        let tmp = NamedTempFile::new().expect("tmp");
+        fs::write(tmp.path(), "[filter]\nignore_process_name = false").unwrap();
+        let err = load_config(tmp.path().to_str().unwrap()).err().unwrap();
+        assert!(err.contains("ignore_process_name"));
+        assert!(err.contains("invalid type"));
     }
 }

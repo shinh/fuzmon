@@ -9,16 +9,21 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 use std::{
     collections::{HashMap, HashSet},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::sleep,
     time::Duration,
-    sync::{atomic::{AtomicBool, Ordering}, Arc},
 };
 
 mod config;
 mod procinfo;
 mod stacktrace;
 
-use crate::config::{Cli, Commands, RunArgs, load_config, merge_config, parse_cli, uid_from_name};
+use crate::config::{
+    Cli, Commands, Config, RunArgs, load_config, merge_config, parse_cli, uid_from_name,
+};
 use crate::procinfo::{
     ProcState, detect_fd_events, get_proc_usage, pid_uid, proc_cpu_jiffies, proc_cpu_time_sec,
     process_name, read_pids, should_suppress, swap_kb, vsz_kb,
@@ -77,11 +82,16 @@ fn main() {
 }
 
 fn run(args: RunArgs) {
-    let config = args
-        .config
-        .as_deref()
-        .and_then(load_config)
-        .unwrap_or_default();
+    let config = match args.config.as_deref() {
+        Some(path) => match load_config(path) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                warn!("{}", e);
+                Config::default()
+            }
+        },
+        None => Config::default(),
+    };
     let config = merge_config(config, &args);
 
     let ignore_patterns: Vec<Regex> = config
@@ -124,10 +134,7 @@ fn run(args: RunArgs) {
         Duration::from_secs(interval)
     };
 
-    let cpu_jiffies_threshold = config
-        .monitor
-        .cpu_time_jiffies_threshold
-        .unwrap_or(1);
+    let cpu_jiffies_threshold = config.monitor.cpu_time_jiffies_threshold.unwrap_or(1);
 
     let term = Arc::new(AtomicBool::new(false));
     {
@@ -306,10 +313,18 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
         };
         for (tid, c) in c_traces.drain(..) {
             let py = py_traces.remove(&(tid as u32));
-            entry.threads.push(ThreadInfo { tid: tid as u32, stacktrace: c, python_stacktrace: py });
+            entry.threads.push(ThreadInfo {
+                tid: tid as u32,
+                stacktrace: c,
+                python_stacktrace: py,
+            });
         }
         for (tid, py) in py_traces.into_iter() {
-            entry.threads.push(ThreadInfo { tid, stacktrace: None, python_stacktrace: Some(py) });
+            entry.threads.push(ThreadInfo {
+                tid,
+                stacktrace: None,
+                python_stacktrace: Some(py),
+            });
         }
     }
     entry
@@ -318,7 +333,11 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
 fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
     let ext = if use_msgpack { "msgpacks" } else { "jsonl" };
     let base = format!("{}/{}.{}", dir.trim_end_matches('/'), entry.pid, ext);
-    let path = if compress { format!("{}.zst", base) } else { base };
+    let path = if compress {
+        format!("{}.zst", base)
+    } else {
+        base
+    };
     match OpenOptions::new().create(true).append(true).open(&path) {
         Ok(file) => {
             if compress {
@@ -361,7 +380,6 @@ fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
         Err(e) => warn!("open {} failed: {}", path, e),
     }
 }
-
 
 fn read_log_entries(path: &Path) -> io::Result<Vec<LogEntry>> {
     let file = fs::File::open(path)?;
