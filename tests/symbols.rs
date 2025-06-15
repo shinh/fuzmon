@@ -1,5 +1,4 @@
 use std::process::{Command, Stdio};
-use std::{thread, time::Duration};
 use std::fs;
 use tempfile::tempdir;
 
@@ -58,8 +57,6 @@ int main() {
         .stdout(Stdio::null())
         .spawn()
         .expect("spawn test program");
-
-    thread::sleep(Duration::from_millis(500));
 
     let pid = child.id();
     let logdir = tempdir().expect("logdir");

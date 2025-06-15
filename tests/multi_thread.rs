@@ -69,7 +69,6 @@ int main() {
         .expect("spawn");
     let mut child_in = child.stdin.take().expect("child stdin");
 
-    thread::sleep(Duration::from_millis(500));
     let pid = child.id();
 
     let logdir = tempdir().expect("logdir");
