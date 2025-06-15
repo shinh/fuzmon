@@ -56,6 +56,10 @@ pub fn run_fuzmon(bin: &str, pid: u32, log_dir: &TempDir) -> String {
     }
     let _ = mon.wait();
 
+    collect_log_content(log_dir)
+}
+
+pub fn collect_log_content(log_dir: &TempDir) -> String {
     let mut log_content = String::new();
     for entry in fs::read_dir(log_dir.path()).expect("read_dir") {
         let path = entry.expect("entry").path();
@@ -68,7 +72,6 @@ pub fn run_fuzmon(bin: &str, pid: u32, log_dir: &TempDir) -> String {
             append_file(&path, &mut log_content);
         }
     }
-
     log_content
 }
 
