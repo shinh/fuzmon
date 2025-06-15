@@ -1,10 +1,12 @@
 use std::{thread::sleep, time::Duration, collections::HashMap};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
-use serde::Serialize;
+use std::io::{self, Write, BufRead, BufReader};
+use std::path::Path;
+use serde::{Serialize, Deserialize};
 use regex::Regex;
 use chrono::Utc;
 use rmp_serde::encode::write_named;
+use rmp_serde::decode::{from_read as read_msgpack, Error as MsgpackError};
 
 mod config;
 mod procinfo;
@@ -18,14 +20,14 @@ use crate::procinfo::{
 };
 use crate::stacktrace::{capture_stack_trace, capture_python_stack_trace};
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct MemoryInfo {
     rss_kb: u64,
     vsz_kb: u64,
     swap_kb: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct LogEntry {
     timestamp: String,
     pid: u32,
@@ -38,7 +40,7 @@ struct LogEntry {
     stacktrace: Option<Vec<String>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct FdLogEvent {
     fd: i32,
     event: String,
@@ -50,7 +52,7 @@ fn main() {
     if let Some(cmd) = cli.command {
         match cmd {
             Commands::Run(args) => run(args),
-            Commands::Dump => println!("TODO!"),
+            Commands::Dump(args) => dump(&args.path),
         }
     } else {
         Cli::command().print_help().unwrap();
@@ -240,7 +242,8 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
 }
 
 fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
-    let base = format!("{}/{}.log", dir.trim_end_matches('/'), entry.pid);
+    let ext = if use_msgpack { "msgs" } else { "jsonl" };
+    let base = format!("{}/{}.{}", dir.trim_end_matches('/'), entry.pid, ext);
     let path = if compress { format!("{}.zst", base) } else { base };
     if let Ok(file) = OpenOptions::new().create(true).append(true).open(&path) {
         if compress {
@@ -262,6 +265,84 @@ fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
                 let _ = file.write_all(b"\n");
             }
         }
+    }
+}
+
+fn read_log_entries(path: &Path) -> io::Result<Vec<LogEntry>> {
+    let file = fs::File::open(path)?;
+    let is_zst = path.extension().and_then(|e| e.to_str()) == Some("zst");
+    let reader: Box<dyn std::io::Read> = if is_zst {
+        Box::new(zstd::Decoder::new(file)?)
+    } else {
+        Box::new(file)
+    };
+
+    let ext = {
+        let mut base = path.to_path_buf();
+        if is_zst {
+            base.set_extension("");
+        }
+        base.extension().and_then(|e| e.to_str()).unwrap_or("").to_string()
+    };
+
+    if ext == "msgs" {
+        let mut r = reader;
+        let mut entries = Vec::new();
+        loop {
+            match read_msgpack(&mut r) {
+                Ok(e) => entries.push(e),
+                Err(MsgpackError::InvalidMarkerRead(ref ioe))
+                | Err(MsgpackError::InvalidDataRead(ref ioe))
+                    if ioe.kind() == io::ErrorKind::UnexpectedEof =>
+                {
+                    break
+                }
+                Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e)),
+            }
+        }
+        Ok(entries)
+    } else {
+        let buf = BufReader::new(reader);
+        let mut entries = Vec::new();
+        for line in buf.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<LogEntry>(&line) {
+                Ok(e) => entries.push(e),
+                Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e)),
+            }
+        }
+        Ok(entries)
+    }
+}
+
+fn dump(path: &str) {
+    let p = Path::new(path);
+    if p.is_dir() {
+        if let Ok(entries) = fs::read_dir(p) {
+            for entry in entries.flatten() {
+                let file_path = entry.path();
+                if file_path.is_file() {
+                    dump_file(&file_path);
+                }
+            }
+        }
+    } else {
+        dump_file(p);
+    }
+}
+
+fn dump_file(path: &Path) {
+    println!("{}", path.display());
+    match read_log_entries(path) {
+        Ok(entries) => {
+            for e in entries {
+                println!("{:?}", e);
+            }
+        }
+        Err(e) => eprintln!("failed to read {}: {}", path.display(), e),
     }
 }
 
