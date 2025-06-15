@@ -1,0 +1,10 @@
+# Recommended settings when running fuzmon as a daemon
+
+[output]
+format = "msgpack"
+path = "/var/log/fuzmon/"
+compress = true
+
+[monitor]
+interval_sec = 60
+cpu_time_jiffies_threshold = 1  # record when CPU usage exceeds 1%

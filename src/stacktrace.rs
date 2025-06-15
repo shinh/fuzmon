@@ -1,11 +1,55 @@
 use addr2line::Loader;
+use log::{info, warn};
 use nix::sys::{ptrace, wait::waitpid};
 use nix::unistd::Pid;
 use object::{Object, ObjectKind};
 use py_spy::{Config as PySpyConfig, PythonSpy};
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
+use std::rc::Rc;
+use std::time::SystemTime;
+
+struct CachedLoader {
+    loader: Rc<Loader>,
+    mtime: Option<SystemTime>,
+}
+
+thread_local! {
+    static LOADER_CACHE: RefCell<HashMap<String, CachedLoader>> = RefCell::new(HashMap::new());
+}
+
+fn get_loader(path: &str) -> Option<Rc<Loader>> {
+    let mtime = fs::metadata(path).and_then(|m| m.modified()).ok();
+    LOADER_CACHE.with(|cache| {
+        let mut map = cache.borrow_mut();
+        if let Some(entry) = map.get(path) {
+            if entry.mtime == mtime {
+                return Some(entry.loader.clone());
+            }
+            map.remove(path);
+        }
+        match Loader::new(path) {
+            Ok(loader) => {
+                info!("load debug symbols from {}", path);
+                let rc = Rc::new(loader);
+                map.insert(
+                    path.to_string(),
+                    CachedLoader {
+                        loader: rc.clone(),
+                        mtime,
+                    },
+                );
+                Some(rc)
+            }
+            Err(e) => {
+                warn!("Loader::new {} failed: {}", path, e);
+                None
+            }
+        }
+    })
+}
 
 pub struct ExeInfo {
     pub start: u64,
@@ -14,7 +58,7 @@ pub struct ExeInfo {
 }
 
 pub struct Module {
-    pub loader: Loader,
+    pub loader: Rc<Loader>,
     pub info: ExeInfo,
     pub is_pic: bool,
 }
@@ -22,7 +66,10 @@ pub struct Module {
 pub fn load_loaders(pid: i32) -> Vec<Module> {
     let maps = match fs::read_to_string(format!("/proc/{}/maps", pid)) {
         Ok(m) => m,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            warn!("read maps {} failed: {}", pid, e);
+            return Vec::new();
+        }
     };
     let mut infos: HashMap<String, ExeInfo> = HashMap::new();
     for line in maps.lines() {
@@ -68,23 +115,27 @@ pub fn load_loaders(pid: i32) -> Vec<Module> {
     }
     let mut modules = Vec::new();
     for (path, info) in infos {
-        if let Ok(loader) = Loader::new(&path) {
-            if let Ok(data) = fs::read(&path) {
-                if let Ok(obj) = object::File::parse(&*data) {
-                    let is_pic = matches!(obj.kind(), ObjectKind::Dynamic);
-                    modules.push(Module {
-                        loader,
-                        info,
-                        is_pic,
-                    });
-                }
+        if let Some(loader) = get_loader(&path) {
+            match fs::read(&path) {
+                Ok(data) => match object::File::parse(&*data) {
+                    Ok(obj) => {
+                        let is_pic = matches!(obj.kind(), ObjectKind::Dynamic);
+                        modules.push(Module {
+                            loader,
+                            info,
+                            is_pic,
+                        });
+                    }
+                    Err(e) => warn!("parse {} failed: {}", path, e),
+                },
+                Err(e) => warn!("read {} failed: {}", path, e),
             }
         }
     }
     modules
 }
 
-fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64, is_pic: bool) -> Option<String> {
+fn describe_addr(loader: &Rc<Loader>, info: &ExeInfo, addr: u64, is_pic: bool) -> Option<String> {
     if addr < info.start || addr >= info.end {
         return None;
     }
@@ -173,7 +224,9 @@ pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
         Ok(lines)
     })();
 
-    let _ = ptrace::detach(target, None);
+    if let Err(e) = ptrace::detach(target, None) {
+        warn!("detach failed: {}", e);
+    }
     res
 }
 
