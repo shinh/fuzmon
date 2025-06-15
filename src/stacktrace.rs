@@ -39,6 +39,7 @@ fn get_loader(path: &str) -> Option<Rc<Loader>> {
             if entry.mtime == mtime {
                 return entry.loader.clone();
             }
+            info!("mmaped file {} mtime changed, reloading: old_mtime={:?} new_mtime={:?}", path, entry.mtime, mtime);
             map.remove(path);
         }
         let mut header = [0u8; 4];
