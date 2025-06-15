@@ -91,6 +91,26 @@ fn append_file(path: &std::path::Path, log_content: &mut String) {
     }
 }
 
+pub fn run_fuzmon_output(
+    bin: &str,
+    pid: u32,
+    log_dir: &TempDir,
+    cfg_file: &NamedTempFile,
+) -> std::process::Output {
+    Command::new(bin)
+        .args([
+            "run",
+            "-p",
+            &pid.to_string(),
+            "-o",
+            log_dir.path().to_str().unwrap(),
+            "-c",
+            cfg_file.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("run fuzmon")
+}
+
 pub fn run_fuzmon_and_check(bin: &str, pid: u32, log_dir: &TempDir, expected: &[&str]) {
     let log_content = run_fuzmon(bin, pid, log_dir);
 
