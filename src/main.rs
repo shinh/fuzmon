@@ -128,11 +128,11 @@ fn run(args: RunArgs) {
         Duration::from_secs(interval)
     };
 
-    let cpu_percent_threshold = config
+    let record_cpu_percent_threshold = config
         .monitor
         .record_cpu_time_percent_threshold
-        .unwrap_or(1.0);
-    let stacktrace_threshold = config
+        .unwrap_or(0.0);
+    let stacktrace_cpu_percent_threshold = config
         .monitor
         .stacktrace_cpu_time_percent_threshold
         .unwrap_or(1.0);
@@ -154,8 +154,8 @@ fn run(args: RunArgs) {
             target_pid,
             target_uid,
             &ignore_patterns,
-            cpu_percent_threshold,
-            stacktrace_threshold,
+            record_cpu_percent_threshold,
+            stacktrace_cpu_percent_threshold,
             output_dir,
             use_msgpack,
             compress,
@@ -184,8 +184,8 @@ fn monitor_iteration(
     target_pid: Option<u32>,
     target_uid: Option<u32>,
     ignore_patterns: &[Regex],
-    cpu_percent_threshold: f64,
-    stacktrace_threshold: f64,
+    record_cpu_percent_threshold: f64,
+    stacktrace_cpu_percent_threshold: f64,
     output_dir: Option<&str>,
     use_msgpack: bool,
     compress: bool,
@@ -202,8 +202,8 @@ fn monitor_iteration(
             states,
             target_pid,
             ignore_patterns,
-            cpu_percent_threshold,
-            stacktrace_threshold,
+            record_cpu_percent_threshold,
+            stacktrace_cpu_percent_threshold,
             output_dir,
             use_msgpack,
             compress,
@@ -242,8 +242,8 @@ fn process_pid(
     states: &mut HashMap<u32, ProcState>,
     target_pid: Option<u32>,
     ignore_patterns: &[Regex],
-    cpu_percent_threshold: f64,
-    stacktrace_threshold: f64,
+    record_cpu_percent_threshold: f64,
+    stacktrace_cpu_percent_threshold: f64,
     output_dir: Option<&str>,
     use_msgpack: bool,
     compress: bool,
@@ -253,7 +253,7 @@ fn process_pid(
     let state = states.entry(pid).or_default();
     let usage = get_proc_usage(pid, state);
     let cpu = usage.map(|u| u.0).unwrap_or(0.0);
-    if should_skip_pid(pid, target_pid, ignore_patterns, cpu_percent_threshold, cpu) {
+    if should_skip_pid(pid, target_pid, ignore_patterns, record_cpu_percent_threshold, cpu) {
         return;
     }
     if is_new {
@@ -292,7 +292,7 @@ fn process_pid(
     }
 
     if let Some(dir) = output_dir {
-        let entry = build_log_entry(pid, cpu, rss, fd_log_events, stacktrace_threshold);
+        let entry = build_log_entry(pid, cpu, rss, fd_log_events, stacktrace_cpu_percent_threshold);
         if verbose {
             if let Ok(line) = serde_json::to_string(&entry) {
                 println!("{}", line);
@@ -306,7 +306,7 @@ fn should_skip_pid(
     pid: u32,
     target_pid: Option<u32>,
     ignore_patterns: &[Regex],
-    cpu_percent_threshold: f64,
+    record_cpu_percent_threshold: f64,
     cpu_percent: f32,
 ) -> bool {
     if target_pid.is_none() {
@@ -315,7 +315,7 @@ fn should_skip_pid(
                 return true;
             }
         }
-        if cpu_percent < cpu_percent_threshold as f32 {
+        if cpu_percent < record_cpu_percent_threshold as f32 {
             return true;
         }
     }
@@ -327,7 +327,7 @@ fn build_log_entry(
     cpu: f32,
     rss: u64,
     fd_events: Vec<FdLogEvent>,
-    stacktrace_threshold: f64,
+    stacktrace_cpu_percent_threshold: f64,
 ) -> LogEntry {
     let mut entry = LogEntry {
         timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
@@ -346,7 +346,7 @@ fn build_log_entry(
         },
         threads: Vec::new(),
     };
-    if cpu < stacktrace_threshold as f32 {
+    if cpu < stacktrace_cpu_percent_threshold as f32 {
         let name = &entry.process_name;
         let mut c_traces = capture_c_stack_traces(pid as i32);
         let mut py_traces = if name.starts_with("python") {
