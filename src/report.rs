@@ -170,6 +170,81 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
     let mut events = Vec::new();
     use std::collections::HashMap;
     let mut active: HashMap<(u32, usize), (String, serde_json::Value, i64, u32)> = HashMap::new();
+
+    fn handle_frames(
+        tid: u32,
+        frames: &[&Frame],
+        pid: u32,
+        ts: i64,
+        active: &mut HashMap<(u32, usize), (String, serde_json::Value, i64, u32)>,
+        events: &mut Vec<serde_json::Value>,
+    ) {
+        if frames.is_empty() {
+            return;
+        }
+
+        // handle existing events beyond current depth
+        let mut depth = frames.len();
+        loop {
+            let key = (tid, depth);
+            if let Some((name, args, start, pid_saved)) = active.remove(&key) {
+                let dur = ts - start;
+                events.push(json!({
+                    "name": name,
+                    "ph": "X",
+                    "pid": pid_saved,
+                    "tid": tid,
+                    "ts": start,
+                    "dur": if dur <= 0 { 1 } else { dur },
+                    "args": args,
+                }));
+                depth += 1;
+            } else {
+                break;
+            }
+        }
+
+        for (idx, frame) in frames.iter().enumerate() {
+            let name = if let Some(f) = &frame.func {
+                f.clone()
+            } else if let Some(a) = frame.addr {
+                format!("{:#x}", a)
+            } else {
+                "?".to_string()
+            };
+            let args = json!({
+                "addr": frame.addr,
+                "file": frame.file,
+                "line": frame.line,
+            });
+            let key = (tid, idx);
+            match active.get_mut(&key) {
+                Some((cur, cur_args, _start, _pid)) if cur == &name => {
+                    *cur_args = args;
+                }
+                Some((cur, cur_args, start, pid_saved)) => {
+                    let dur = ts - *start;
+                    events.push(json!({
+                        "name": cur,
+                        "ph": "X",
+                        "pid": *pid_saved,
+                        "tid": tid,
+                        "ts": *start,
+                        "dur": if dur <= 0 { 1 } else { dur },
+                        "args": cur_args.clone(),
+                    }));
+                    *cur = name;
+                    *cur_args = args;
+                    *start = ts;
+                    *pid_saved = pid;
+                }
+                None => {
+                    active.insert(key, (name, args, ts, pid));
+                }
+            }
+        }
+    }
+
     for (i, e) in sorted.iter().enumerate() {
         if e.threads.is_empty() {
             continue;
@@ -180,75 +255,20 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
         let ts = dt.timestamp_micros();
 
         for t in &e.threads {
-            let mut frames: Vec<&Frame> = Vec::new();
             if let Some(st) = &t.stacktrace {
-                frames.extend(st.iter());
+                let frames: Vec<&Frame> = st.iter().collect();
+                handle_frames(t.tid << 1, &frames, e.pid, ts, &mut active, &mut events);
             }
             if let Some(py) = &t.python_stacktrace {
-                frames.extend(py.iter());
-            }
-            if frames.is_empty() {
-                continue;
-            }
-            // handle existing events beyond current depth
-            let mut depth = frames.len();
-            loop {
-                let key = (t.tid, depth);
-                if let Some((name, args, start, pid)) = active.remove(&key) {
-                    let dur = ts - start;
-                    events.push(json!({
-                        "name": name,
-                        "ph": "X",
-                        "pid": pid,
-                        "tid": t.tid,
-                        "ts": start,
-                        "dur": if dur <= 0 { 1 } else { dur },
-                        "args": args,
-                    }));
-                    depth += 1;
-                } else {
-                    break;
-                }
-            }
-
-            for (idx, frame) in frames.into_iter().enumerate() {
-                let name = if let Some(f) = &frame.func {
-                    f.clone()
-                } else if let Some(a) = frame.addr {
-                    format!("{:#x}", a)
-                } else {
-                    "?".to_string()
-                };
-                let args = json!({
-                    "addr": frame.addr,
-                    "file": frame.file,
-                    "line": frame.line,
-                });
-                let key = (t.tid, idx);
-                match active.get_mut(&key) {
-                    Some((cur, cur_args, _start, _pid)) if cur == &name => {
-                        *cur_args = args;
-                    }
-                    Some((cur, cur_args, start, pid)) => {
-                        let dur = ts - *start;
-                        events.push(json!({
-                            "name": cur,
-                            "ph": "X",
-                            "pid": *pid,
-                            "tid": t.tid,
-                            "ts": *start,
-                            "dur": if dur <= 0 { 1 } else { dur },
-                            "args": cur_args.clone(),
-                        }));
-                        *cur = name;
-                        *cur_args = args;
-                        *start = ts;
-                        *pid = e.pid;
-                    }
-                    None => {
-                        active.insert(key, (name, args, ts, e.pid));
-                    }
-                }
+                let frames: Vec<&Frame> = py.iter().collect();
+                handle_frames(
+                    (t.tid << 1) | 1,
+                    &frames,
+                    e.pid,
+                    ts,
+                    &mut active,
+                    &mut events,
+                );
             }
         }
 
