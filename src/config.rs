@@ -183,16 +183,15 @@ mod tests {
 
     #[test]
     fn load_example_config() {
-        let cfg = load_config("ai_docs/example_config.toml");
-        assert_eq!(cfg.output.format.as_deref(), Some("json"));
+        let cfg = load_config("examples/daemon.toml");
+        assert_eq!(cfg.output.format.as_deref(), Some("msgpack"));
         assert_eq!(cfg.output.path.as_deref(), Some("/var/log/fuzmon/"));
         assert_eq!(cfg.output.compress, Some(true));
         assert_eq!(cfg.monitor.interval_sec, Some(60));
         assert_eq!(cfg.monitor.record_cpu_time_percent_threshold, Some(0.0));
-        assert_eq!(cfg.monitor.stacktrace_cpu_time_percent_threshold, Some(0.0));
-        assert_eq!(cfg.filter.target_user.as_deref(), Some("myname"));
-        assert_eq!(cfg.report.top_cpu, Some(5));
-        assert_eq!(cfg.report.top_rss, Some(5));
+        assert_eq!(cfg.monitor.stacktrace_cpu_time_percent_threshold, Some(1.0));
+        assert_eq!(cfg.report.top_cpu, None);
+        assert_eq!(cfg.report.top_rss, None);
     }
 
     #[test]
