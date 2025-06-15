@@ -16,7 +16,7 @@ pub struct ExeInfo {
 pub struct Module {
     pub loader: Loader,
     pub info: ExeInfo,
-    pub is_pie: bool,
+    pub is_pic: bool,
 }
 
 
@@ -57,8 +57,8 @@ pub fn load_loaders(pid: i32) -> Vec<Module> {
         if let Ok(loader) = Loader::new(&path) {
             if let Ok(data) = fs::read(&path) {
                 if let Ok(obj) = object::File::parse(&*data) {
-                    let is_pie = matches!(obj.kind(), ObjectKind::Dynamic);
-                    modules.push(Module { loader, info, is_pie });
+                    let is_pic = matches!(obj.kind(), ObjectKind::Dynamic);
+                    modules.push(Module { loader, info, is_pic });
                 }
             }
         }
@@ -66,12 +66,12 @@ pub fn load_loaders(pid: i32) -> Vec<Module> {
     modules
 }
 
-fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64, is_pie: bool) -> Option<String> {
+fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64, is_pic: bool) -> Option<String> {
     if addr < info.start || addr >= info.end {
         return None;
     }
     let mut probe = addr;
-    if is_pie {
+    if is_pic {
         probe = addr.wrapping_sub(info.start);
     }
     probe = probe.wrapping_sub(loader.relative_address_base());
@@ -142,7 +142,7 @@ pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
         for (i, addr) in stack.iter().enumerate() {
             let mut line = format!("{:>2}: {:#x}", i, addr);
             for m in &modules {
-                if let Some(info) = describe_addr(&m.loader, &m.info, *addr, m.is_pie) {
+                if let Some(info) = describe_addr(&m.loader, &m.info, *addr, m.is_pic) {
                     line = format!("{:>2}: {:#x} {}", i, addr, info);
                     break;
                 }
