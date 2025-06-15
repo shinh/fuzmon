@@ -11,6 +11,7 @@ use py_spy::{Config as PySpyConfig, PythonSpy};
 pub struct ExeInfo {
     pub start: u64,
     pub end: u64,
+    pub offset: u64,
 }
 
 pub struct Module {
@@ -30,21 +31,24 @@ pub fn load_loaders(pid: i32) -> Vec<Module> {
         let mut parts = line.split_whitespace();
         let range = match parts.next() { Some(v) => v, None => continue };
         let _perms = match parts.next() { Some(v) => v, None => continue };
-        let _offset = match parts.next() { Some(v) => v, None => continue };
+        let offset = match parts.next() { Some(v) => v, None => continue };
         let _dev = parts.next();
         let _inode = parts.next();
         let path = match parts.next() { Some(v) => v, None => continue };
         if let Some((start, end)) = range.split_once('-') {
-            if let (Ok(start_addr), Ok(end_addr)) = (
+            if let (Ok(start_addr), Ok(end_addr), Ok(off)) = (
                 u64::from_str_radix(start, 16),
                 u64::from_str_radix(end, 16),
+                u64::from_str_radix(offset, 16),
             ) {
                 let entry = infos.entry(path.to_string()).or_insert(ExeInfo {
                     start: start_addr,
                     end: end_addr,
+                    offset: off,
                 });
                 if start_addr < entry.start {
                     entry.start = start_addr;
+                    entry.offset = off;
                 }
                 if end_addr > entry.end {
                     entry.end = end_addr;
@@ -72,7 +76,7 @@ fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64, is_pic: bool) -> Op
     }
     let mut probe = addr;
     if is_pic {
-        probe = addr.wrapping_sub(info.start);
+        probe = addr.wrapping_sub(info.start).wrapping_add(info.offset);
     }
     probe = probe.wrapping_sub(loader.relative_address_base());
     let mut info_str = String::new();
