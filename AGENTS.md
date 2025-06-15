@@ -1,10 +1,12 @@
 ## Language
 
-- Use English for comment, commit message, and branch name
+- Use English for comment, commit message, and git branch name
 
 ## Testing
 
-- Run `cargo test`
+- Remove all compiler warnings
+- Add appropriate tests
+- Get `cargo test` pass
 
 ## Guide
 
