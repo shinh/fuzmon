@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::{thread, time::Duration};
 use tempfile::tempdir;
 mod common;
 
@@ -33,6 +34,7 @@ if __name__ == '__main__':
         .expect("spawn python");
     let mut child_in = child.stdin.take().expect("child stdin");
 
+    thread::sleep(Duration::from_millis(500));
     let pid = child.id();
 
     let logdir = tempdir().expect("logdir");
