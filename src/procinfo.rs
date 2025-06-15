@@ -1,5 +1,4 @@
 use log::warn;
-use nix::libc;
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
@@ -144,16 +143,6 @@ pub fn vsz_kb(pid: u32) -> Option<u64> {
 
 pub fn swap_kb(pid: u32) -> Option<u64> {
     read_status_value(pid, "VmSwap:")
-}
-
-pub fn proc_cpu_time_sec(pid: u32) -> Option<f64> {
-    let (u, s) = read_proc_stat(pid)?;
-    let clk = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
-    if clk > 0.0 {
-        Some((u + s) as f64 / clk)
-    } else {
-        None
-    }
 }
 
 fn read_total_cpu_time() -> Option<u64> {

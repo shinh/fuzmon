@@ -53,7 +53,7 @@
   "timestamp": "2025-06-14T14:23:51Z",
   "pid": 12345,
   "process_name": "python3",
-  "cpu_time_sec": 12.3,
+  "cpu_time_percent": 12.3,
   "memory": {
     "rss_kb": 20480,
     "vsz_kb": 105000,

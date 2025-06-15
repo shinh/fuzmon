@@ -25,8 +25,8 @@ use crate::config::{
     Cli, Commands, Config, RunArgs, load_config, merge_config, parse_cli, uid_from_name,
 };
 use crate::procinfo::{
-    ProcState, detect_fd_events, get_proc_usage, pid_uid, proc_cpu_time_sec, process_name,
-    read_pids, rss_kb, should_suppress, swap_kb, vsz_kb,
+    ProcState, detect_fd_events, get_proc_usage, pid_uid, process_name, read_pids, rss_kb,
+    should_suppress, swap_kb, vsz_kb,
 };
 use crate::stacktrace::{capture_c_stack_traces, capture_python_stack_traces};
 use clap::CommandFactory;
@@ -43,7 +43,7 @@ struct LogEntry {
     timestamp: String,
     pid: u32,
     process_name: String,
-    cpu_time_sec: f64,
+    cpu_time_percent: f64,
     memory: MemoryInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     fd_events: Option<Vec<FdLogEvent>>,
@@ -336,7 +336,7 @@ fn should_skip_pid(
 
 fn build_log_entry(
     pid: u32,
-    cpu: f32,
+    cpu_percent: f32,
     rss: u64,
     fd_events: Vec<FdLogEvent>,
     stacktrace_cpu_percent_threshold: f64,
@@ -345,7 +345,7 @@ fn build_log_entry(
         timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         pid,
         process_name: process_name(pid).unwrap_or_else(|| "?".into()),
-        cpu_time_sec: proc_cpu_time_sec(pid).unwrap_or(0.0),
+        cpu_time_percent: cpu_percent as f64,
         memory: MemoryInfo {
             rss_kb: rss,
             vsz_kb: vsz_kb(pid).unwrap_or(0),
@@ -358,7 +358,7 @@ fn build_log_entry(
         },
         threads: Vec::new(),
     };
-    if cpu >= stacktrace_cpu_percent_threshold as f32 {
+    if cpu_percent >= stacktrace_cpu_percent_threshold as f32 {
         let name = &entry.process_name;
         let mut c_traces = capture_c_stack_traces(pid as i32);
         let mut py_traces = if name.starts_with("python") {
