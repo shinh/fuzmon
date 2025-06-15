@@ -160,5 +160,8 @@ foo()
         .output()
         .expect("run report");
     assert!(out.status.success());
-    assert!(outdir.path().join(format!("{pid}_trace.json")).exists());
+    let trace_path = outdir.path().join(format!("{pid}_trace.json"));
+    assert!(trace_path.exists());
+    let trace = fs::read_to_string(trace_path).unwrap();
+    assert!(trace.contains("traceEvents"), "{}", trace);
 }

@@ -1,6 +1,7 @@
 use chrono::Utc;
 use html_escape::encode_text;
 use log::warn;
+use plotters::prelude::*;
 use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
@@ -99,84 +100,148 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
     sorted.sort_by_key(|e| e.timestamp.clone());
     let start = chrono::DateTime::parse_from_rfc3339(&sorted[0].timestamp)
         .map(|t| t.with_timezone(&Utc))
-        .unwrap()
-        .timestamp() as f64;
+        .unwrap();
     let end = chrono::DateTime::parse_from_rfc3339(&sorted.last().unwrap().timestamp)
         .map(|t| t.with_timezone(&Utc))
-        .unwrap()
-        .timestamp() as f64;
-    let total = (end - start).max(1.0);
+        .unwrap();
 
-    let width = 400.0;
-    let height = 100.0;
-
-    let mut max_val = 0.0;
+    let x_max = (end - start).num_seconds().max(1) as f64;
+    let mut max_val = 0.0f64;
+    let mut series = Vec::new();
     for e in &sorted {
+        let t = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
+            .map(|tt| tt.with_timezone(&Utc))
+            .unwrap();
+        let x = (t - start).num_seconds() as f64;
         let v = match field {
             GraphField::Cpu => e.cpu_time_percent,
             GraphField::Rss => e.memory.rss_kb as f64,
         };
-        if v > max_val {
-            max_val = v;
-        }
+        max_val = max_val.max(v);
+        series.push((x, v));
     }
     if max_val <= 0.0 {
         max_val = 1.0;
     }
-    let mut points = String::new();
-    for e in &sorted {
-        let t = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
-            .map(|tt| tt.with_timezone(&Utc))
-            .unwrap()
-            .timestamp() as f64;
-        let x = (t - start) * width / total;
-        let v = match field {
-            GraphField::Cpu => e.cpu_time_percent,
-            GraphField::Rss => e.memory.rss_kb as f64,
-        };
-        let y = height - v * height / max_val;
-        points.push_str(&format!("{:.1},{:.1} ", x, y));
-    }
-    let svg = format!(
-        "<svg xmlns='http://www.w3.org/2000/svg' width='{w}' height='{h}'><polyline fill='none' stroke='blue' stroke-width='1' points='{p}' /></svg>",
-        w = width,
-        h = height,
-        p = points.trim_end()
-    );
-    fs::write(out, svg)
+
+    let root = SVGBackend::new(out, (600, 300)).into_drawing_area();
+    root.fill(&WHITE)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let y_desc = match field {
+        GraphField::Cpu => "CPU %",
+        GraphField::Rss => "RSS KB",
+    };
+    let caption = match field {
+        GraphField::Cpu => "CPU usage (%)",
+        GraphField::Rss => "Resident set size (KB)",
+    };
+    let mut chart = ChartBuilder::on(&root)
+        .caption(caption, ("sans-serif", 20))
+        .margin(5)
+        .x_label_area_size(30)
+        .y_label_area_size(40)
+        .build_cartesian_2d(0f64..x_max, 0f64..max_val)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    chart
+        .configure_mesh()
+        .x_desc("time (s)")
+        .y_desc(y_desc)
+        .draw()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    chart
+        .draw_series(LineSeries::new(series, &BLUE))
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    root.present()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
 }
 
 fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut sorted: Vec<&LogEntry> = entries.iter().collect();
+    sorted.sort_by_key(|e| e.timestamp.clone());
     let mut events = Vec::new();
-    for e in entries {
+    use std::collections::HashMap;
+    let mut active: HashMap<(u32, usize), (String, i64, u32)> = HashMap::new();
+    for (i, e) in sorted.iter().enumerate() {
         if e.threads.is_empty() {
             continue;
         }
         let dt = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
             .map(|t| t.with_timezone(&Utc))
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let ts = dt.timestamp() as i64 * 1_000_000 + dt.timestamp_subsec_micros() as i64;
+            .map_err(|er| io::Error::new(io::ErrorKind::InvalidData, er))?;
+        let ts = dt.timestamp_micros();
+
         for t in &e.threads {
-            if t.stacktrace.is_none() && t.python_stacktrace.is_none() {
-                continue;
-            }
-            let mut args = serde_json::Map::new();
+            let mut frames: Vec<String> = Vec::new();
             if let Some(st) = &t.stacktrace {
-                args.insert("stack".into(), json!(st));
+                frames.extend(st.iter().cloned());
             }
             if let Some(py) = &t.python_stacktrace {
-                args.insert("python_stack".into(), json!(py));
+                frames.extend(py.iter().cloned());
             }
-            events.push(json!({
-                "name": e.process_name,
-                "cat": "stacktrace",
-                "ph": "i",
-                "s": "t",
-                "pid": e.pid,
-                "tid": t.tid,
-                "ts": ts,
-                "args": args,
-            }));
+            if frames.is_empty() {
+                continue;
+            }
+            // handle existing events beyond current depth
+            let mut depth = frames.len();
+            loop {
+                let key = (t.tid, depth);
+                if let Some((name, start, pid)) = active.remove(&key) {
+                    let dur = ts - start;
+                    events.push(json!({
+                        "name": name,
+                        "ph": "X",
+                        "pid": pid,
+                        "tid": t.tid,
+                        "ts": start,
+                        "dur": if dur <= 0 { 1 } else { dur },
+                    }));
+                    depth += 1;
+                } else {
+                    break;
+                }
+            }
+
+            for (idx, name) in frames.into_iter().enumerate() {
+                let key = (t.tid, idx);
+                match active.get_mut(&key) {
+                    Some((cur, _start, _pid)) if cur == &name => {}
+                    Some((cur, start, pid)) => {
+                        let dur = ts - *start;
+                        events.push(json!({
+                            "name": cur,
+                            "ph": "X",
+                            "pid": *pid,
+                            "tid": t.tid,
+                            "ts": *start,
+                            "dur": if dur <= 0 { 1 } else { dur },
+                        }));
+                        *cur = name;
+                        *start = ts;
+                        *pid = e.pid;
+                    }
+                    None => {
+                        active.insert(key, (name, ts, e.pid));
+                    }
+                }
+            }
+        }
+
+        if i == sorted.len() - 1 {
+            let final_ts = ts;
+            for ((tid, _idx), (name, start, pid)) in active.drain() {
+                let dur = final_ts - start;
+                events.push(json!({
+                    "name": name,
+                    "ph": "X",
+                    "pid": pid,
+                    "tid": tid,
+                    "ts": start,
+                    "dur": if dur <= 0 { 1 } else { dur },
+                }));
+            }
         }
     }
     if events.is_empty() {
@@ -226,11 +291,11 @@ fn render_single(s: &Stats) -> String {
         out.push_str("<p>Environment: unknown</p>\n");
     }
     out.push_str(&format!(
-        "<p><img src=\"{}_cpu.svg\" alt=\"CPU usage\" /></p>\n",
+        "<p>CPU usage<br><img src=\"{}_cpu.svg\" alt=\"CPU usage graph\" /></p>\n",
         s.pid
     ));
     out.push_str(&format!(
-        "<p><img src=\"{}_rss.svg\" alt=\"RSS\" /></p>\n",
+        "<p>RSS<br><img src=\"{}_rss.svg\" alt=\"RSS graph\" /></p>\n",
         s.pid
     ));
     out.push_str("</body></html>\n");
