@@ -26,7 +26,6 @@ sys.stdin.readline()
 
     let mut child = Command::new("python3")
         .arg(&script)
-        .arg(&file_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()
@@ -124,7 +123,7 @@ sys.stdin.readline()
         "{}",
         log_content
     );
-    assert!(log_content.contains(logfile), "{}", log_content);
+    assert!(log_content.contains("testfile"), "{}", log_content);
     assert!(
         log_content.contains("\"event\":\"close\""),
         "{}",
