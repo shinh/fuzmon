@@ -1,6 +1,8 @@
 # fuzmon
 
 Lightweight fuzzy process monitor for Linux.
+Logs can be written in JSON (default) or MessagePack when `format = "msgpack"` is set in the config.
+Python processes are traced using an embedded `py-spy` integration when possible.
 
 ```
 fuzmon -o logs/             # write logs under ./logs

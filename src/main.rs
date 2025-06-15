@@ -2,7 +2,9 @@ use std::{thread::sleep, time::Duration, collections::HashMap};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use serde::Serialize;
+use regex::Regex;
 use chrono::{Utc, SecondsFormat};
+use rmp_serde::encode::write_named;
 
 mod config;
 mod procinfo;
@@ -11,9 +13,9 @@ mod stacktrace;
 use crate::config::{parse_args, load_config, merge_config, uid_from_name};
 use crate::procinfo::{
     read_pids, pid_uid, get_proc_usage, ProcState, should_suppress, process_name,
-    proc_cpu_time_sec, vsz_kb, swap_kb,
+    proc_cpu_time_sec, proc_cpu_jiffies, vsz_kb, swap_kb,
 };
-use crate::stacktrace::{attach_and_trace, capture_stack_trace};
+use crate::stacktrace::{attach_and_trace, capture_stack_trace, capture_python_stack_trace};
 
 #[derive(Serialize)]
 struct MemoryInfo {
@@ -43,6 +45,16 @@ fn main() {
         .unwrap_or_default();
     let config = merge_config(config, &args);
 
+    let ignore_patterns: Vec<Regex> = config
+        .filter
+        .ignore_process_name
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|p| Regex::new(&p).ok())
+        .collect();
+
+    let use_msgpack = matches!(config.output.format.as_deref(), Some("msgpack"));
+
     let output_dir = config.output.path.as_deref();
     if let Some(dir) = output_dir {
         let _ = fs::create_dir_all(dir);
@@ -69,6 +81,8 @@ fn main() {
         Duration::from_secs(interval)
     };
 
+    let cpu_jiffies_threshold = config.monitor.cpu_time_jiffies_threshold.unwrap_or(1);
+
     let mut states: HashMap<u32, ProcState> = HashMap::new();
     loop {
         let mut pids = read_pids();
@@ -77,6 +91,14 @@ fn main() {
         }
         println!("Found {} PIDs", pids.len());
         for pid in &pids {
+            if let Some(name) = process_name(*pid) {
+                if ignore_patterns.iter().any(|re| re.is_match(&name)) {
+                    continue;
+                }
+            }
+            if proc_cpu_jiffies(*pid).unwrap_or(0) < cpu_jiffies_threshold {
+                continue;
+            }
             let state = states.entry(*pid).or_default();
             if let Some((cpu, rss)) = get_proc_usage(*pid, state) {
                 if !should_suppress(cpu, rss) {
@@ -98,14 +120,28 @@ fn main() {
                         stacktrace: None,
                     };
                     if cpu < 1.0 {
-                        if let Ok(trace) = capture_stack_trace(*pid as i32) {
+                        let name = &entry.process_name;
+                        if name.starts_with("python") {
+                            match capture_python_stack_trace(*pid as i32) {
+                                Ok(t) => entry.stacktrace = Some(t),
+                                Err(_) => {
+                                    if let Ok(t) = capture_stack_trace(*pid as i32) {
+                                        entry.stacktrace = Some(t);
+                                    }
+                                }
+                            }
+                        } else if let Ok(trace) = capture_stack_trace(*pid as i32) {
                             entry.stacktrace = Some(trace);
                         }
                     }
                     let path = format!("{}/{}.log", dir.trim_end_matches('/'), pid);
                     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-                        let _ = serde_json::to_writer(&mut file, &entry);
-                        let _ = file.write_all(b"\n");
+                        if use_msgpack {
+                            let _ = write_named(&mut file, &entry);
+                        } else {
+                            let _ = serde_json::to_writer(&mut file, &entry);
+                            let _ = file.write_all(b"\n");
+                        }
                     }
                 }
             }
