@@ -38,7 +38,10 @@ fn get_loader(path: &str) -> Option<Rc<Loader>> {
             if entry.mtime == mtime {
                 return entry.loader.clone();
             }
-            map.remove(path);
+            if entry.loader.is_none() {
+                return None;
+            }
+            info!("mapped file updated: {} old_mtime={:?} new_mtime={:?}", path, entry.mtime, mtime);
         }
         match Loader::new(path) {
             Ok(loader) => {
