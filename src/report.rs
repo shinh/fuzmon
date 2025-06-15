@@ -1,6 +1,7 @@
 use chrono::Utc;
 use html_escape::encode_text;
 use log::warn;
+use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -145,6 +146,46 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
     fs::write(out, svg)
 }
 
+fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
+    let mut events = Vec::new();
+    for e in entries {
+        if e.threads.is_empty() {
+            continue;
+        }
+        let dt = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
+            .map(|t| t.with_timezone(&Utc))
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let ts = dt.timestamp() as i64 * 1_000_000 + dt.timestamp_subsec_micros() as i64;
+        for t in &e.threads {
+            if t.stacktrace.is_none() && t.python_stacktrace.is_none() {
+                continue;
+            }
+            let mut args = serde_json::Map::new();
+            if let Some(st) = &t.stacktrace {
+                args.insert("stack".into(), json!(st));
+            }
+            if let Some(py) = &t.python_stacktrace {
+                args.insert("python_stack".into(), json!(py));
+            }
+            events.push(json!({
+                "name": e.process_name,
+                "cat": "stacktrace",
+                "ph": "i",
+                "s": "t",
+                "pid": e.pid,
+                "tid": t.tid,
+                "ts": ts,
+                "args": args,
+            }));
+        }
+    }
+    if events.is_empty() {
+        return Ok(());
+    }
+    let obj = json!({ "traceEvents": events });
+    fs::write(out, serde_json::to_vec(&obj)?)
+}
+
 fn write_graphs(entries: &[LogEntry], out_dir: &Path, pid: u32) {
     let cpu_path = out_dir.join(format!("{}_cpu.svg", pid));
     if let Err(e) = write_svg(entries, &cpu_path, GraphField::Cpu) {
@@ -153,6 +194,13 @@ fn write_graphs(entries: &[LogEntry], out_dir: &Path, pid: u32) {
     let rss_path = out_dir.join(format!("{}_rss.svg", pid));
     if let Err(e) = write_svg(entries, &rss_path, GraphField::Rss) {
         warn!("failed to write {}: {}", rss_path.display(), e);
+    }
+}
+
+fn write_trace(entries: &[LogEntry], out_dir: &Path, pid: u32) {
+    let path = out_dir.join(format!("{}_trace.json", pid));
+    if let Err(e) = write_chrome_trace(entries, &path) {
+        warn!("failed to write {}: {}", path.display(), e);
     }
 }
 
@@ -221,6 +269,7 @@ fn report_file(path: &Path, out_dir: &Path) {
         Ok(entries) => {
             if let Some(s) = calc_stats(path, &entries) {
                 write_graphs(&entries, out_dir, s.pid);
+                write_trace(&entries, out_dir, s.pid);
                 let html = render_single(&s);
                 let index = out_dir.join("index.html");
                 if let Err(e) = fs::write(&index, html) {
@@ -301,6 +350,7 @@ fn report_dir(path: &Path, out_dir: &Path, top_cpu: usize, top_rss: usize) {
             Ok(entries) => {
                 if let Some(stats) = calc_stats(Path::new(&s.path), &entries) {
                     write_graphs(&entries, out_dir, s.pid);
+                    write_trace(&entries, out_dir, s.pid);
                     let html = render_single(&stats);
                     let out = out_dir.join(format!("{}.html", s.pid));
                     if let Err(e) = fs::write(&out, html) {
