@@ -77,42 +77,77 @@ fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn report_file(path: &Path) {
+fn render_single(s: &Stats) -> String {
+    let mut out = String::new();
+    out.push_str("<html><body>\n");
+    out.push_str(&format!("<h1>Report for PID {}</h1>\n", s.pid));
+    out.push_str(&format!("<p>Command: {}</p>\n", encode_text(&s.cmd)));
+    out.push_str("<ul>\n");
+    out.push_str(&format!("<li>Total runtime: {} sec</li>\n", s.runtime));
+    out.push_str(&format!("<li>Total CPU time: {:.1} sec</li>\n", s.cpu));
+    out.push_str(&format!("<li>Peak RSS: {} KB</li>\n", s.peak_rss));
+    out.push_str("</ul>\n");
+    if let Some(e) = &s.env {
+        if !e.is_empty() {
+            out.push_str(&format!(
+                "<details><summary>Environment</summary><pre>{}</pre></details>\n",
+                encode_text(e)
+            ));
+        }
+    } else {
+        out.push_str("<p>Environment: unknown</p>\n");
+    }
+    out.push_str("</body></html>\n");
+    out
+}
+
+fn render_index(stats: &[Stats], link: bool) -> String {
+    let mut out = String::new();
+    out.push_str("<html><body>\n");
+    out.push_str("<table>\n");
+    out.push_str(
+        "<tr><th>PID</th><th>Command</th><th>Total runtime</th><th>Total CPU time</th><th>Peak RSS</th></tr>\n",
+    );
+    for s in stats {
+        let pid_cell = if link {
+            format!("<a href=\"{}.html\">{}</a>", s.pid, s.pid)
+        } else {
+            s.pid.to_string()
+        };
+        out.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{}</td></tr>\n",
+            pid_cell,
+            encode_text(&s.cmd),
+            s.runtime,
+            s.cpu,
+            s.peak_rss
+        ));
+    }
+    out.push_str("</table></body></html>\n");
+    out
+}
+
+fn report_file(path: &Path, out_dir: &Path) {
     match read_log_entries(path) {
         Ok(entries) => {
             if let Some(s) = calc_stats(path, &entries) {
-                print_single(&s);
+                let html = render_single(&s);
+                let index = out_dir.join("index.html");
+                if let Err(e) = fs::write(&index, html) {
+                    warn!("failed to write {}: {}", index.display(), e);
+                }
             } else {
-                println!("<p>No entries</p>");
+                let index = out_dir.join("index.html");
+                if let Err(e) = fs::write(&index, "<p>No entries</p>") {
+                    warn!("failed to write {}: {}", index.display(), e);
+                }
             }
         }
         Err(e) => warn!("failed to read {}: {}", path.display(), e),
     }
 }
 
-fn print_single(s: &Stats) {
-    println!("<html><body>");
-    println!("<h1>Report for PID {}</h1>", s.pid);
-    println!("<p>Command: {}</p>", encode_text(&s.cmd));
-    println!("<ul>");
-    println!("<li>Total runtime: {} sec</li>", s.runtime);
-    println!("<li>Total CPU time: {:.1} sec</li>", s.cpu);
-    println!("<li>Peak RSS: {} KB</li>", s.peak_rss);
-    println!("</ul>");
-    if let Some(e) = &s.env {
-        if !e.is_empty() {
-            println!(
-                "<details><summary>Environment</summary><pre>{}</pre></details>",
-                encode_text(e)
-            );
-        }
-    } else {
-        println!("<p>Environment: unknown</p>");
-    }
-    println!("</body></html>");
-}
-
-fn report_dir(path: &Path, top_cpu: usize, top_rss: usize) {
+fn report_dir(path: &Path, out_dir: &Path, top_cpu: usize, top_rss: usize) {
     let mut files = Vec::new();
     collect_files(path, &mut files);
     let mut stats = Vec::new();
@@ -127,7 +162,10 @@ fn report_dir(path: &Path, top_cpu: usize, top_rss: usize) {
         }
     }
     if stats.is_empty() {
-        println!("<p>No entries</p>");
+        let index = out_dir.join("index.html");
+        if let Err(e) = fs::write(&index, "<p>No entries</p>") {
+            warn!("failed to write {}: {}", index.display(), e);
+        }
         return;
     }
 
@@ -146,22 +184,28 @@ fn report_dir(path: &Path, top_cpu: usize, top_rss: usize) {
     let mut selected: Vec<_> = map.into_values().collect();
     selected.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap());
 
-    println!("<html><body>");
-    println!("<table>");
-    println!(
-        "<tr><th>PID</th><th>Command</th><th>Total runtime</th><th>Total CPU time</th><th>Peak RSS</th></tr>"
-    );
-    for s in &selected {
-        println!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{}</td></tr>",
-            s.pid,
-            encode_text(&s.cmd),
-            s.runtime,
-            s.cpu,
-            s.peak_rss
-        );
+    // write index.html
+    let index_html = render_index(&selected, true);
+    let index_path = out_dir.join("index.html");
+    if let Err(e) = fs::write(&index_path, index_html) {
+        warn!("failed to write {}: {}", index_path.display(), e);
     }
-    println!("</table></body></html>");
+
+    // write per pid files
+    for s in &selected {
+        match read_log_entries(Path::new(&s.path)) {
+            Ok(entries) => {
+                if let Some(stats) = calc_stats(Path::new(&s.path), &entries) {
+                    let html = render_single(&stats);
+                    let out = out_dir.join(format!("{}.html", s.pid));
+                    if let Err(e) = fs::write(&out, html) {
+                        warn!("failed to write {}: {}", out.display(), e);
+                    }
+                }
+            }
+            Err(e) => warn!("failed to read {}: {}", s.path, e),
+        }
+    }
 }
 
 pub fn report(args: &ReportArgs) {
@@ -170,10 +214,28 @@ pub fn report(args: &ReportArgs) {
     } else {
         finalize_report_config(Default::default())
     };
-    let path = Path::new(&args.path);
-    if path.is_dir() {
-        report_dir(path, cfg.top_cpu.unwrap_or(10), cfg.top_rss.unwrap_or(10));
+    let input = Path::new(&args.path);
+    let out_dir = if let Some(ref o) = args.output {
+        PathBuf::from(o)
     } else {
-        report_file(path);
+        let name = input
+            .file_stem()
+            .or_else(|| input.file_name())
+            .unwrap_or_default();
+        PathBuf::from(name)
+    };
+    if let Err(e) = fs::create_dir_all(&out_dir) {
+        warn!("failed to create {}: {}", out_dir.display(), e);
     }
+    if input.is_dir() {
+        report_dir(
+            input,
+            &out_dir,
+            cfg.top_cpu.unwrap_or(10),
+            cfg.top_rss.unwrap_or(10),
+        );
+    } else {
+        report_file(input, &out_dir);
+    }
+    println!("{}", out_dir.display());
 }
