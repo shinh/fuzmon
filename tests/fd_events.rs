@@ -1,3 +1,4 @@
+use fuzmon::test_utils::wait_until_file_appears;
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -48,12 +49,7 @@ sys.stdin.readline()
 
     let plain = logdir.path().join(format!("{}.jsonl", pid));
     let zst = logdir.path().join(format!("{}.jsonl.zst", pid));
-    for _ in 0..50 {
-        if plain.exists() || zst.exists() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_until_file_appears(&logdir, pid);
 
     child_in.write_all(b"\n").unwrap();
     child_in.flush().unwrap();

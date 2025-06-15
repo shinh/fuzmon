@@ -1,8 +1,7 @@
 use fuzmon::test_utils::run_fuzmon;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
-use std::{thread, time::Duration};
 use tempfile::tempdir;
 
 #[test]
@@ -18,6 +17,7 @@ def foo():
     bar()
 
 def bar():
+    print("ready", flush=True)
     sys.stdin.readline()
 
 if __name__ == '__main__':
@@ -29,12 +29,16 @@ if __name__ == '__main__':
     let mut child = Command::new("python3")
         .arg(&script)
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .spawn()
         .expect("spawn python");
     let mut child_in = child.stdin.take().expect("child stdin");
+    let mut child_out = BufReader::new(child.stdout.take().expect("child stdout"));
 
-    thread::sleep(Duration::from_millis(500));
+    let mut line = String::new();
+    child_out.read_line(&mut line).expect("read line");
+    assert_eq!(line.trim(), "ready");
+
     let pid = child.id();
 
     let logdir = tempdir().expect("logdir");
