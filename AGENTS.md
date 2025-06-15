@@ -1,11 +1,8 @@
-## Language
-
-- Use English for comment, commit message, and git branch name
-
 ## Style
 
 - Remove all compiler warnings
 - Use info! log for non-frequent events and use warn! for errors
+- Avoid code duplication by adding helper functions
 - Run `cargo fmt`
 
 ## Testing
