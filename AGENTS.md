@@ -10,6 +10,7 @@
 
 - Add appropriate tests
 - Get `cargo test` pass
+- Never add sleep
 
 ## Guide
 
