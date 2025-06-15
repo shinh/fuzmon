@@ -16,7 +16,7 @@ fn detect_fd_open_close() {
         &script,
         r#"import sys
 sys.stdin.readline()
-f=open(sys.argv[1], 'w')
+f=open("testfile", 'w')
 sys.stdin.readline()
 f.close()
 sys.stdin.readline()
@@ -100,7 +100,6 @@ sys.stdin.readline()
         thread::sleep(Duration::from_millis(10));
     }
 
-    child_in.write_all(b"\n").unwrap();
     drop(child_in);
 
     let _ = child.wait();
