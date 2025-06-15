@@ -102,10 +102,7 @@ sys.stdin.readline()
     drop(child_in);
 
     let _ = child.wait();
-    unsafe {
-        let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
-    }
-    let _ = mon.wait();
+    fuzmon::test_utils::kill_with_sigint_and_wait(&mut mon);
 
     let path = if plain.exists() { &plain } else { &zst };
     let log_content = if path.extension().and_then(|e| e.to_str()) == Some("zst") {

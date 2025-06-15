@@ -69,10 +69,7 @@ int main() {
     let logdir = tempdir().expect("logdir");
     run_fuzmon_and_check(env!("CARGO_BIN_EXE_fuzmon"), pid, &logdir, expected);
 
-    unsafe {
-        let _ = nix::libc::kill(child.id() as i32, nix::libc::SIGINT);
-    }
-    let _ = child.wait();
+    fuzmon::test_utils::kill_with_sigint_and_wait(&mut child);
 }
 
 #[test]
