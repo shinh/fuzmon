@@ -45,15 +45,7 @@ fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         .spawn()
         .expect("run fuzmon");
 
-    thread::sleep(Duration::from_millis(800));
-    let plain = logdir.path().join(format!("{}.jsonl", pid));
-    let zst = logdir.path().join(format!("{}.jsonl.zst", pid));
-    for _ in 0..80 {
-        if plain.exists() || zst.exists() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+    common::wait_until_file_appears(&logdir, pid);
     let _ = mon.kill();
     let _ = mon.wait();
 
@@ -91,15 +83,7 @@ fn run_default() -> (tempfile::TempDir, std::path::PathBuf) {
         .spawn()
         .expect("run fuzmon");
 
-    thread::sleep(Duration::from_millis(800));
-    let plain = logdir.path().join(format!("{}.jsonl", pid));
-    let zst = logdir.path().join(format!("{}.jsonl.zst", pid));
-    for _ in 0..80 {
-        if plain.exists() || zst.exists() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+    common::wait_until_file_appears(&logdir, pid);
     let _ = mon.kill();
     let _ = mon.wait();
 

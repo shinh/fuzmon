@@ -63,10 +63,7 @@ int main() {
 
     let pid = child.id();
     let logdir = tempdir().expect("logdir");
-    common::run_fuzmon_and_check(
-        &["-p", &pid.to_string(), "-o", logdir.path().to_str().unwrap()],
-        expected,
-    );
+    common::run_fuzmon_and_check(pid, &logdir, expected);
 
     let _ = child.kill();
     let _ = child.wait();
