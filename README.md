@@ -24,3 +24,5 @@ Each line in the log file is a JSON object similar to:
   "stacktrace": [[" 0: 0xdeadbeef main at main.c:42"]]
 }
 ```
+CPU usage is reported in the same way as the `top` command, so values can
+exceed 100% when multiple threads are busy.

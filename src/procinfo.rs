@@ -1,5 +1,12 @@
 use log::warn;
 use std::collections::HashMap;
+
+fn compute_cpu_percent(delta_proc: u64, delta_total: u64, num_cpus: usize) -> f32 {
+    if delta_total == 0 {
+        return 0.0;
+    }
+    100.0 * delta_proc as f32 / delta_total as f32 * num_cpus as f32
+}
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 
@@ -196,11 +203,22 @@ pub fn get_proc_usage(pid: u32, state: &mut ProcState) -> Option<(f32, u64)> {
     if delta_total == 0 {
         return None;
     }
-    let cpu = 100.0 * delta_proc as f32 / delta_total as f32;
+    let cpu = compute_cpu_percent(delta_proc, delta_total, num_cpus::get());
     let rss = rss_kb(pid).unwrap_or(0);
     Some((cpu, rss))
 }
 
 pub fn should_suppress(cpu: f32, rss_kb: u64) -> bool {
     cpu == 0.0 && rss_kb < 100 * 1024
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_cpu_percent;
+
+    #[test]
+    fn busy_two_threads_reports_200_percent() {
+        let percent = compute_cpu_percent(2, 2, 2);
+        assert!((percent - 200.0).abs() < f32::EPSILON);
+    }
 }
