@@ -25,12 +25,13 @@ use crate::config::{
     Cli, Commands, Config, RunArgs, load_config, merge_config, parse_cli, uid_from_name,
 };
 use crate::procinfo::{
-    ProcState, cmdline, detect_fd_events, environ, get_proc_usage, pid_uid, process_name,
-    read_pids, rss_kb, should_suppress, swap_kb, vsz_kb,
+    ProcState, cmdline, detect_fd_events, environ, get_proc_usage, pid_uid, proc_exists,
+    process_name, read_pids, rss_kb, should_suppress, swap_kb, vsz_kb,
 };
 use crate::stacktrace::{capture_c_stack_traces, capture_python_stack_traces};
 use clap::CommandFactory;
 use fuzmon::utils::current_date_string;
+use html_escape::encode_text;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct MemoryInfo {
@@ -124,7 +125,37 @@ fn run(args: RunArgs) {
         }
     }
 
-    let target_pid = args.pid.map(|p| p as u32);
+    let mut child = None;
+    let mut target_pid = args.pid.map(|p| p as u32);
+    if target_pid.is_none() && !args.command.is_empty() {
+        let mut cmd = std::process::Command::new(&args.command[0]);
+        if args.command.len() > 1 {
+            cmd.args(&args.command[1..]);
+        }
+        match cmd.spawn() {
+            Ok(c) => {
+                target_pid = Some(c.id());
+                child = Some(c);
+                info!("spawned {} as pid {}", args.command[0], target_pid.unwrap());
+            }
+            Err(e) => {
+                let msg = format!("failed to spawn {}: {}", args.command[0], e);
+                println!("{}", msg);
+                warn!("{}", msg);
+                return;
+            }
+        }
+    }
+
+    if let Some(pid) = target_pid {
+        if fs::metadata(format!("/proc/{}", pid)).is_err() {
+            let msg = format!("pid {} not found", pid);
+            println!("{}", msg);
+            warn!("{}", msg);
+            return;
+        }
+    }
+
     let target_uid = config.filter.target_user.as_deref().and_then(uid_from_name);
 
     let interval = config.monitor.interval_sec.unwrap_or(0);
@@ -155,6 +186,15 @@ fn run(args: RunArgs) {
 
     let mut states: HashMap<u32, ProcState> = HashMap::new();
     loop {
+        if let Some(pid) = target_pid {
+            if !proc_exists(pid) {
+                let name = process_name(pid).unwrap_or_else(|| "?".to_string());
+                let msg = format!("Process {pid} ({name}) disappeared, exiting");
+                println!("{}", msg);
+                info!("{}", msg);
+                break;
+            }
+        }
         monitor_iteration(
             &mut states,
             target_pid,
@@ -167,6 +207,15 @@ fn run(args: RunArgs) {
             compress,
             verbose,
         );
+        if let Some(ref mut c) = child {
+            if c.try_wait().ok().flatten().is_some() {
+                break;
+            }
+        } else if let Some(pid) = target_pid {
+            if fs::metadata(format!("/proc/{}", pid)).is_err() {
+                break;
+            }
+        }
         if term.load(Ordering::SeqCst) {
             break;
         }
@@ -196,6 +245,9 @@ fn run(args: RunArgs) {
             compress,
             verbose,
         );
+    }
+    if let Some(mut c) = child {
+        let _ = c.wait();
     }
 }
 
@@ -634,7 +686,7 @@ fn report(path: &str) {
             }
             println!("<html><body>");
             println!("<h1>Report for PID {}</h1>", pid);
-            println!("<p>Command: {}</p>", html_escape::encode_text(&cmd));
+            println!("<p>Command: {}</p>", encode_text(&cmd));
             println!("<ul>");
             println!("<li>Total runtime: {} sec</li>", total_time);
             println!("<li>Total CPU time: {:.1} sec</li>", cpu);
@@ -644,7 +696,7 @@ fn report(path: &str) {
                 if !e.is_empty() {
                     println!(
                         "<details><summary>Environment</summary><pre>{}</pre></details>",
-                        html_escape::encode_text(&e)
+                        encode_text(&e)
                     );
                 }
             } else {
