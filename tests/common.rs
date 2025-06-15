@@ -1,6 +1,7 @@
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
 use std::fs;
+use zstd::stream;
 
 pub fn run_fuzmon_and_check(args: &[&str], expected: &[&str]) {
     let log_dir = args.iter()
@@ -21,6 +22,16 @@ pub fn run_fuzmon_and_check(args: &[&str], expected: &[&str]) {
     let mut log_content = String::new();
     for entry in fs::read_dir(log_dir).expect("read_dir") {
         let path = entry.expect("entry").path();
+        if let Some(ext) = path.extension() {
+            if ext == "zst" {
+                if let Ok(data) = fs::read(&path) {
+                    if let Ok(decoded) = stream::decode_all(&*data) {
+                        log_content.push_str(&String::from_utf8_lossy(&decoded));
+                        continue;
+                    }
+                }
+            }
+        }
         if let Ok(s) = fs::read_to_string(&path) {
             log_content.push_str(&s);
         }
