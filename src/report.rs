@@ -293,6 +293,18 @@ fn write_trace(entries: &[LogEntry], out_dir: &Path, pid: u32) {
     }
 }
 
+fn truncate(s: &str, len: usize) -> String {
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i >= len {
+            out.push_str("...");
+            break;
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn render_single(s: &Stats) -> String {
     let mut out = String::new();
     out.push_str("<html><body>\n");
@@ -328,7 +340,7 @@ fn render_single(s: &Stats) -> String {
 
 fn render_index(stats: &[Stats], link: bool) -> String {
     let mut out = String::new();
-    out.push_str("<html><body>\n");
+    out.push_str("<html><head><style>table,th,td{border:1px solid black;border-collapse:collapse;}pre{margin:0;}</style></head><body>\n");
     out.push_str("<table>\n");
     out.push_str(
         "<tr><th>PID</th><th>Command</th><th>Total runtime</th><th>Total CPU time</th><th>Avg CPU (%)</th><th>Peak RSS</th></tr>\n",
@@ -339,14 +351,15 @@ fn render_index(stats: &[Stats], link: bool) -> String {
         } else {
             s.pid.to_string()
         };
+        let summary = truncate(&s.cmd, 30);
+        let cmd_cell = format!(
+            "<details><summary>{}</summary><pre>{}</pre></details>",
+            encode_text(&summary),
+            encode_text(&s.cmd)
+        );
         out.push_str(&format!(
             "<tr><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{:.1}</td><td>{}</td></tr>\n",
-            pid_cell,
-            encode_text(&s.cmd),
-            s.runtime,
-            s.cpu,
-            s.avg_cpu,
-            s.peak_rss
+            pid_cell, cmd_cell, s.runtime, s.cpu, s.avg_cpu, s.peak_rss
         ));
     }
     out.push_str("</table></body></html>\n");
