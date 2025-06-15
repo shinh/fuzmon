@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::rc::Rc;
 use std::time::SystemTime;
 
@@ -39,6 +40,26 @@ fn get_loader(path: &str) -> Option<Rc<Loader>> {
                 return entry.loader.clone();
             }
             map.remove(path);
+        }
+        let mut header = [0u8; 4];
+        match fs::File::open(path).and_then(|mut f| f.read_exact(&mut header)) {
+            Ok(_) => {
+                if header != [0x7f, b'E', b'L', b'F'] {
+                    map.insert(
+                        path.to_string(),
+                        CachedLoader { loader: None, mtime },
+                    );
+                    return None;
+                }
+            }
+            Err(e) => {
+                warn!("read {} failed: {}", path, e);
+                map.insert(
+                    path.to_string(),
+                    CachedLoader { loader: None, mtime },
+                );
+                return None;
+            }
         }
         match Loader::new(path) {
             Ok(loader) => {
@@ -303,6 +324,16 @@ mod tests {
     fn loader_none_for_non_regular() {
         clear_cache();
         assert!(get_loader("/dev/null").is_none());
+    }
+
+    #[test]
+    fn loader_none_for_non_elf() {
+        clear_cache();
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("plain.txt");
+        std::fs::write(&file, b"plain").unwrap();
+        assert!(get_loader(file.to_str().unwrap()).is_none());
+        assert!(get_loader(file.to_str().unwrap()).is_none());
     }
 
     #[test]
