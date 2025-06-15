@@ -111,6 +111,7 @@ fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
     Ok(addrs)
 }
 
+#[allow(dead_code)]
 pub fn attach_and_trace(pid: i32) -> nix::Result<()> {
     if let Some(name) = process_name(pid as u32) {
         if name.starts_with("python") {

@@ -17,6 +17,9 @@ pub struct CmdArgs {
     /// Output directory for logs
     #[arg(short = 'o', long)]
     pub output: Option<String>,
+    /// Verbose output
+    #[arg(short, long)]
+    pub verbose: bool,
 }
 
 #[derive(Default, Deserialize)]
