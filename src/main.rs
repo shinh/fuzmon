@@ -25,8 +25,8 @@ use crate::config::{
     Cli, Commands, Config, RunArgs, load_config, merge_config, parse_cli, uid_from_name,
 };
 use crate::procinfo::{
-    ProcState, detect_fd_events, get_proc_usage, pid_uid, process_name, read_pids, rss_kb,
-    should_suppress, swap_kb, vsz_kb,
+    ProcState, detect_fd_events, get_proc_usage, pid_uid, proc_exists, process_name, read_pids,
+    rss_kb, should_suppress, swap_kb, vsz_kb,
 };
 use crate::stacktrace::{capture_c_stack_traces, capture_python_stack_traces};
 use clap::CommandFactory;
@@ -176,6 +176,15 @@ fn run(args: RunArgs) {
 
     let mut states: HashMap<u32, ProcState> = HashMap::new();
     loop {
+        if let Some(pid) = target_pid {
+            if !proc_exists(pid) {
+                let name = process_name(pid).unwrap_or_else(|| "?".to_string());
+                let msg = format!("Process {pid} ({name}) disappeared, exiting");
+                println!("{}", msg);
+                info!("{}", msg);
+                break;
+            }
+        }
         monitor_iteration(
             &mut states,
             target_pid,

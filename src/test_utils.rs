@@ -5,6 +5,26 @@ use std::{thread, time::Duration};
 use tempfile::{NamedTempFile, TempDir};
 use zstd::stream;
 
+fn build_fuzmon_command(
+    bin: &str,
+    pid: u32,
+    log_dir: &TempDir,
+    cfg_file: &NamedTempFile,
+) -> Command {
+    let pid_s = pid.to_string();
+    let mut cmd = Command::new(bin);
+    cmd.args([
+        "run",
+        "-p",
+        &pid_s,
+        "-o",
+        log_dir.path().to_str().unwrap(),
+        "-c",
+        cfg_file.path().to_str().unwrap(),
+    ]);
+    cmd
+}
+
 pub fn wait_until_file_appears(logdir: &TempDir, pid: u32) {
     let date = current_date_string();
     let dir = logdir.path().join(&date);
@@ -32,20 +52,9 @@ pub fn create_config(threshold: f64) -> NamedTempFile {
 }
 
 pub fn run_fuzmon(bin: &str, pid: u32, log_dir: &TempDir) -> String {
-    let pid_s = pid.to_string();
-
     let cfg_file = create_config(0.0);
 
-    let mut mon = Command::new(bin)
-        .args([
-            "run",
-            "-p",
-            &pid_s,
-            "-o",
-            log_dir.path().to_str().unwrap(),
-            "-c",
-            cfg_file.path().to_str().unwrap(),
-        ])
+    let mut mon = build_fuzmon_command(bin, pid, log_dir, &cfg_file)
         .stdout(Stdio::null())
         .spawn()
         .expect("run fuzmon");
@@ -89,6 +98,17 @@ fn append_file(path: &std::path::Path, log_content: &mut String) {
     if let Ok(s) = fs::read_to_string(path) {
         log_content.push_str(&s);
     }
+}
+
+pub fn run_fuzmon_output(
+    bin: &str,
+    pid: u32,
+    log_dir: &TempDir,
+    cfg_file: &NamedTempFile,
+) -> std::process::Output {
+    build_fuzmon_command(bin, pid, log_dir, cfg_file)
+        .output()
+        .expect("run fuzmon")
 }
 
 pub fn run_fuzmon_and_check(bin: &str, pid: u32, log_dir: &TempDir, expected: &[&str]) {
