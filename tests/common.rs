@@ -6,7 +6,6 @@ use zstd::stream;
 
 #[allow(dead_code)]
 pub fn wait_until_file_appears(logdir: &TempDir, pid: u32) {
-    thread::sleep(Duration::from_millis(800));
     let plain = logdir.path().join(format!("{pid}.jsonl"));
     let zst = logdir.path().join(format!("{pid}.jsonl.zst"));
     for _ in 0..80 {
