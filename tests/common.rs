@@ -1,7 +1,7 @@
 use std::fs;
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
-use tempfile::TempDir;
+use tempfile::{NamedTempFile, TempDir};
 use zstd::stream;
 
 pub fn wait_until_file_appears(logdir: &TempDir, pid: u32) {
@@ -15,11 +15,35 @@ pub fn wait_until_file_appears(logdir: &TempDir, pid: u32) {
     }
 }
 
+
+pub fn create_config(threshold: f64) -> NamedTempFile {
+    let cfg_file = NamedTempFile::new().expect("cfg");
+    fs::write(
+        cfg_file.path(),
+        format!(
+            "[monitor]\nstacktrace_cpu_time_percent_threshold = {}",
+            threshold
+        ),
+    )
+    .expect("write cfg");
+    cfg_file
+}
+
 pub fn run_fuzmon_and_check(pid: u32, log_dir: &TempDir, expected: &[&str]) {
     let pid_s = pid.to_string();
 
+    let cfg_file = create_config(0.0);
+
     let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
-        .args(["run", "-p", &pid_s, "-o", log_dir.path().to_str().unwrap()])
+        .args([
+            "run",
+            "-p",
+            &pid_s,
+            "-o",
+            log_dir.path().to_str().unwrap(),
+            "-c",
+            cfg_file.path().to_str().unwrap(),
+        ])
         .stdout(Stdio::null())
         .spawn()
         .expect("run fuzmon");

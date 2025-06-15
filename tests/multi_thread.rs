@@ -4,6 +4,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
 use tempfile::tempdir;
+mod common;
 
 #[test]
 fn multi_thread_stacktrace_has_multiple_entries() {
@@ -72,6 +73,8 @@ int main() {
     let pid = child.id();
 
     let logdir = tempdir().expect("logdir");
+    let cfg_file = common::create_config(0.0);
+
     let mut mon = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
         .args([
             "run",
@@ -79,6 +82,8 @@ int main() {
             &pid.to_string(),
             "-o",
             logdir.path().to_str().unwrap(),
+            "-c",
+            cfg_file.path().to_str().unwrap(),
         ])
         .stdout(Stdio::null())
         .spawn()
