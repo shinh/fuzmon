@@ -253,7 +253,13 @@ fn process_pid(
     let state = states.entry(pid).or_default();
     let usage = get_proc_usage(pid, state);
     let cpu = usage.map(|u| u.0).unwrap_or(0.0);
-    if should_skip_pid(pid, target_pid, ignore_patterns, record_cpu_percent_threshold, cpu) {
+    if should_skip_pid(
+        pid,
+        target_pid,
+        ignore_patterns,
+        record_cpu_percent_threshold,
+        cpu,
+    ) {
         return;
     }
     if is_new {
@@ -292,7 +298,13 @@ fn process_pid(
     }
 
     if let Some(dir) = output_dir {
-        let entry = build_log_entry(pid, cpu, rss, fd_log_events, stacktrace_cpu_percent_threshold);
+        let entry = build_log_entry(
+            pid,
+            cpu,
+            rss,
+            fd_log_events,
+            stacktrace_cpu_percent_threshold,
+        );
         if verbose {
             if let Ok(line) = serde_json::to_string(&entry) {
                 println!("{}", line);
