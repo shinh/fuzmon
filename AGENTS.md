@@ -2,7 +2,7 @@
 
 - Remove all compiler warnings
 - Use info! log for non-frequent events and use warn! for errors
-- Avoid code duplication by adding helper functions
+- Never copy-and-paste code. Eliminate duplicated code
 - Run `cargo fmt`
 - Never use `allow(dead_code)`
 
