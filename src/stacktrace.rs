@@ -24,7 +24,6 @@ fn get_loader(path: &str) -> Option<Rc<Loader>> {
     if path.starts_with("[") {
         return None;
     }
-
     let mtime = fs::metadata(path).and_then(|m| m.modified()).ok();
     LOADER_CACHE.with(|cache| {
         let mut map = cache.borrow_mut();
@@ -234,16 +233,39 @@ pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
     res
 }
 
-pub fn capture_python_stack_trace(pid: i32) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn capture_stack_traces(pid: i32) -> Vec<Option<Vec<String>>> {
+    let mut tids: Vec<i32> = match fs::read_dir(format!("/proc/{}/task", pid)) {
+        Ok(d) => d
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter_map(|s| s.parse::<i32>().ok())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    tids.sort_unstable();
+    let mut traces = Vec::new();
+    for tid in tids {
+        match capture_stack_trace(tid) {
+            Ok(t) => traces.push(Some(t)),
+            Err(_) => traces.push(None),
+        }
+    }
+    traces
+}
+
+pub fn capture_python_stack_traces(
+    pid: i32,
+) -> Result<Vec<Option<Vec<String>>>, Box<dyn std::error::Error>> {
     let config = PySpyConfig::default();
     let mut spy = PythonSpy::new(pid as py_spy::Pid, &config)?;
     let traces = spy.get_stack_traces()?;
-    let mut lines = Vec::new();
+    let mut result = Vec::new();
     for t in traces {
-        lines.push(format!("thread {}", t.thread_id));
+        let mut lines = Vec::new();
         for f in t.frames {
-            lines.push(format!("    {} {}:{}", f.name, f.filename, f.line));
+            lines.push(format!("{} {}:{}", f.name, f.filename, f.line));
         }
+        result.push(Some(lines));
     }
-    Ok(lines)
+    Ok(result)
 }

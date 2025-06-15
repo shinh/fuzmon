@@ -5,9 +5,13 @@ use rmp_serde::decode::{Error as MsgpackError, from_read as read_msgpack};
 use rmp_serde::encode::write_named;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
-use std::{thread::sleep, time::Duration, collections::{HashMap, HashSet}};
+use std::{
+    collections::{HashMap, HashSet},
+    thread::sleep,
+    time::Duration,
+};
 
 mod config;
 mod procinfo;
@@ -18,7 +22,7 @@ use crate::procinfo::{
     ProcState, detect_fd_events, get_proc_usage, pid_uid, proc_cpu_jiffies, proc_cpu_time_sec,
     process_name, read_pids, should_suppress, swap_kb, vsz_kb,
 };
-use crate::stacktrace::{capture_python_stack_trace, capture_stack_trace};
+use crate::stacktrace::{capture_python_stack_traces, capture_stack_traces};
 use clap::CommandFactory;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -37,8 +41,8 @@ struct LogEntry {
     memory: MemoryInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     fd_events: Option<Vec<FdLogEvent>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stacktrace: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    stacktrace: Vec<Option<Vec<String>>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -247,26 +251,20 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
         } else {
             Some(fd_events)
         },
-        stacktrace: None,
+        stacktrace: Vec::new(),
     };
     if cpu < 1.0 {
         let name = &entry.process_name;
         if name.starts_with("python") {
-            match capture_python_stack_trace(pid as i32) {
-                Ok(t) => entry.stacktrace = Some(t),
+            match capture_python_stack_traces(pid as i32) {
+                Ok(t) => entry.stacktrace = t,
                 Err(e) => {
                     warn!("python trace failed: {}", e);
-                    match capture_stack_trace(pid as i32) {
-                        Ok(t) => entry.stacktrace = Some(t),
-                        Err(e) => warn!("stack trace failed: {}", e),
-                    }
+                    entry.stacktrace = capture_stack_traces(pid as i32);
                 }
             }
         } else {
-            match capture_stack_trace(pid as i32) {
-                Ok(trace) => entry.stacktrace = Some(trace),
-                Err(e) => warn!("stack trace failed: {}", e),
-            }
+            entry.stacktrace = capture_stack_traces(pid as i32);
         }
     }
     entry
