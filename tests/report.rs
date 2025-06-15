@@ -103,6 +103,32 @@ fn html_report_directory() {
 }
 
 #[test]
+fn command_column_collapsed() {
+    let dir = tempdir().expect("dir");
+    let log = dir.path().join("1234.jsonl");
+    fs::write(
+        &log,
+        "{\"timestamp\":\"2025-06-14T00:00:00Z\",\"pid\":1234,\"process_name\":\"a\",\"cpu_time_percent\":0.0,\"memory\":{\"rss_kb\":1000,\"vsz_kb\":0,\"swap_kb\":0},\"cmdline\":\"a very very long command line that should be collapsed\"}\n{\"timestamp\":\"2025-06-14T00:00:10Z\",\"pid\":1234,\"process_name\":\"a\",\"cpu_time_percent\":0.0,\"memory\":{\"rss_kb\":1000,\"vsz_kb\":0,\"swap_kb\":0}}\n",
+    )
+    .unwrap();
+
+    let outdir = tempdir().expect("outdir");
+    let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+        .args([
+            "report",
+            dir.path().to_str().unwrap(),
+            "-o",
+            outdir.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("run report dir");
+    assert!(out.status.success());
+    let html = fs::read_to_string(outdir.path().join("index.html")).unwrap();
+    assert!(html.contains("<details>"), "{}", html);
+    assert!(html.contains("border-collapse"), "{}", html);
+}
+
+#[test]
 fn trace_json_created_with_stacktrace() {
     use fuzmon::test_utils::run_fuzmon;
     use fuzmon::utils::current_date_string;
