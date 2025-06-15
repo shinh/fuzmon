@@ -44,7 +44,7 @@ if __name__ == '__main__':
     let _ = child.kill();
     let _ = child.wait();
 
-    let log_path = logdir.path().join(format!("{}.log", pid));
+    let log_path = logdir.path().join(format!("{}.jsonl", pid));
     let log = fs::read_to_string(log_path).expect("read log");
     assert!(log.contains("foo"), "{}", log);
     assert!(log.contains("bar"), "{}", log);

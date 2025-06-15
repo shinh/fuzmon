@@ -41,7 +41,7 @@ sys.stdin.readline()
         .spawn()
         .expect("run fuzmon");
 
-    let log_path = logdir.path().join(format!("{}.log", pid));
+    let log_path = logdir.path().join(format!("{}.jsonl", pid));
     for _ in 0..50 {
         if log_path.exists() {
             break;

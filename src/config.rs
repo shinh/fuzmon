@@ -14,7 +14,13 @@ pub enum Commands {
     /// Run the monitor
     Run(RunArgs),
     /// Dump logs
-    Dump,
+    Dump(DumpArgs),
+}
+
+#[derive(Parser, Clone)]
+pub struct DumpArgs {
+    /// Path to log file or directory
+    pub path: String,
 }
 
 #[derive(Parser, Default, Clone)]
