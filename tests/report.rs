@@ -227,3 +227,88 @@ fn no_trace_link_without_stacktrace() {
     let html = fs::read_to_string(outdir.path().join("index.html")).unwrap();
     assert!(!html.contains(&format!("{}_trace.json", pid)), "{}", html);
 }
+
+#[test]
+fn trace_python_stack_on_separate_row() {
+    use fuzmon::test_utils::run_fuzmon;
+    use fuzmon::utils::current_date_string;
+    use std::collections::HashSet;
+    use std::io::{BufRead, BufReader, Write};
+
+    let dir = tempdir().expect("dir");
+    let script = dir.path().join("test_row.py");
+    fs::write(
+        &script,
+        r#"import sys
+def foo():
+    print('ready', flush=True)
+    sys.stdin.readline()
+foo()
+"#,
+    )
+    .unwrap();
+
+    let mut child = Command::new("python3")
+        .arg(&script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn python");
+    let mut child_in = child.stdin.take().unwrap();
+    let mut child_out = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    child_out.read_line(&mut line).unwrap();
+    assert_eq!(line.trim(), "ready");
+
+    let pid = child.id();
+    let logdir = tempdir().expect("logdir");
+    run_fuzmon(env!("CARGO_BIN_EXE_fuzmon"), pid, &logdir);
+
+    child_in.write_all(b"\n").unwrap();
+    drop(child_in);
+    let _ = child.wait();
+
+    let date = current_date_string();
+    let base = logdir.path().join(&date).join(format!("{pid}.jsonl"));
+    let log_path = if base.exists() {
+        base
+    } else {
+        base.with_extension("jsonl.zst")
+    };
+
+    let outdir = tempdir().expect("outdir");
+    let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+        .args([
+            "report",
+            log_path.to_str().unwrap(),
+            "-o",
+            outdir.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("run report");
+    assert!(out.status.success());
+
+    let trace_path = outdir.path().join(format!("{pid}_trace.json"));
+    let trace = fs::read_to_string(trace_path).unwrap();
+    let obj: serde_json::Value = serde_json::from_str(&trace).unwrap();
+    let events = obj
+        .get("traceEvents")
+        .and_then(|v| v.as_array())
+        .expect("events");
+
+    let mut tids: HashSet<u64> = HashSet::new();
+    for e in events {
+        if let Some(tid) = e.get("tid").and_then(|v| v.as_u64()) {
+            tids.insert(tid);
+        }
+    }
+
+    let mut has_pair = false;
+    for tid in &tids {
+        if tid % 2 == 0 && tids.contains(&(tid + 1)) {
+            has_pair = true;
+            break;
+        }
+    }
+    assert!(has_pair, "no separate python row: {:?}", tids);
+}
