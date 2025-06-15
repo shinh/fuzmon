@@ -128,7 +128,7 @@ pub fn merge_config(mut cfg: Config, args: &RunArgs) -> Config {
         cfg.monitor.record_cpu_time_percent_threshold = Some(0.0);
     }
     if cfg.monitor.stacktrace_cpu_time_percent_threshold.is_none() {
-        cfg.monitor.stacktrace_cpu_time_percent_threshold = Some(1.0);
+        cfg.monitor.stacktrace_cpu_time_percent_threshold = Some(0.0);
     }
     cfg
 }
@@ -150,8 +150,8 @@ mod tests {
         assert_eq!(cfg.output.path.as_deref(), Some("/var/log/fuzmon/"));
         assert_eq!(cfg.output.compress, Some(true));
         assert_eq!(cfg.monitor.interval_sec, Some(60));
-        assert_eq!(cfg.monitor.record_cpu_time_percent_threshold, Some(1.0));
-        assert_eq!(cfg.monitor.stacktrace_cpu_time_percent_threshold, Some(1.0));
+        assert_eq!(cfg.monitor.record_cpu_time_percent_threshold, Some(0.0));
+        assert_eq!(cfg.monitor.stacktrace_cpu_time_percent_threshold, Some(0.0));
         assert_eq!(cfg.filter.target_user.as_deref(), Some("myname"));
     }
 
@@ -181,10 +181,10 @@ mod tests {
         let merged = merge_config(cfg, &args);
         assert_eq!(merged.output.path.as_deref(), Some("/tmp/fuzmon"));
         assert_eq!(merged.output.compress, Some(true));
-        assert_eq!(merged.monitor.record_cpu_time_percent_threshold, Some(1.0));
+        assert_eq!(merged.monitor.record_cpu_time_percent_threshold, Some(0.0));
         assert_eq!(
             merged.monitor.stacktrace_cpu_time_percent_threshold,
-            Some(1.0)
+            Some(0.0)
         );
     }
 

@@ -135,7 +135,7 @@ fn run(args: RunArgs) {
     let stacktrace_cpu_percent_threshold = config
         .monitor
         .stacktrace_cpu_time_percent_threshold
-        .unwrap_or(1.0);
+        .unwrap_or(0.0);
 
     let term = Arc::new(AtomicBool::new(false));
     {
