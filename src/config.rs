@@ -28,8 +28,11 @@ pub struct DumpArgs {
 
 #[derive(Parser, Clone)]
 pub struct ReportArgs {
-    /// Path to log file
+    /// Path to log file or directory
     pub path: String,
+    /// Path to configuration file
+    #[arg(short = 'c', long)]
+    pub config: Option<String>,
 }
 
 #[derive(Parser, Default, Clone)]
@@ -85,6 +88,15 @@ pub struct MonitorConfig {
     pub stacktrace_cpu_time_percent_threshold: Option<f64>,
 }
 
+#[derive(Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ReportConfig {
+    #[serde(default)]
+    pub top_cpu: Option<usize>,
+    #[serde(default)]
+    pub top_rss: Option<usize>,
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -94,6 +106,8 @@ pub struct Config {
     pub output: OutputConfig,
     #[serde(default)]
     pub monitor: MonitorConfig,
+    #[serde(default)]
+    pub report: ReportConfig,
 }
 
 pub fn load_config(path: &str) -> Config {
@@ -144,6 +158,16 @@ pub fn merge_config(mut cfg: Config, args: &RunArgs) -> Config {
     cfg
 }
 
+pub fn finalize_report_config(mut cfg: ReportConfig) -> ReportConfig {
+    if cfg.top_cpu.is_none() {
+        cfg.top_cpu = Some(10);
+    }
+    if cfg.top_rss.is_none() {
+        cfg.top_rss = Some(10);
+    }
+    cfg
+}
+
 pub fn parse_cli() -> Cli {
     Cli::parse()
 }
@@ -164,6 +188,8 @@ mod tests {
         assert_eq!(cfg.monitor.record_cpu_time_percent_threshold, Some(0.0));
         assert_eq!(cfg.monitor.stacktrace_cpu_time_percent_threshold, Some(0.0));
         assert_eq!(cfg.filter.target_user.as_deref(), Some("myname"));
+        assert_eq!(cfg.report.top_cpu, Some(5));
+        assert_eq!(cfg.report.top_rss, Some(5));
     }
 
     #[test]
@@ -197,6 +223,13 @@ mod tests {
             merged.monitor.stacktrace_cpu_time_percent_threshold,
             Some(1.0)
         );
+    }
+
+    #[test]
+    fn report_config_defaults() {
+        let cfg = finalize_report_config(ReportConfig::default());
+        assert_eq!(cfg.top_cpu, Some(10));
+        assert_eq!(cfg.top_rss, Some(10));
     }
 
     #[test]

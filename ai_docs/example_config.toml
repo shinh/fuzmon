@@ -11,3 +11,7 @@ compress = true
 interval_sec = 60
 record_cpu_time_percent_threshold = 0.0
 stacktrace_cpu_time_percent_threshold = 0.0
+
+[report]
+top_cpu = 5
+top_rss = 5

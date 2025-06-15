@@ -16,7 +16,7 @@ fn main() {
         match cmd {
             Commands::Run(args) => run::run(args),
             Commands::Dump(args) => dump::dump(&args.path),
-            Commands::Report(args) => report::report(&args.path),
+            Commands::Report(args) => report::report(&args),
         }
     } else {
         Cli::command().print_help().unwrap();
