@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use tempfile::tempdir;
 
@@ -24,6 +25,8 @@ static void block_read() {
 
 __attribute__((noinline))
 void target_function() {
+    puts("ready");
+    fflush(stdout);
     while (1) {
         block_read();
     }
@@ -54,9 +57,13 @@ int main() {
 
     let mut child = Command::new(&exe_path)
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .spawn()
         .expect("spawn test program");
+    let mut child_out = BufReader::new(child.stdout.take().expect("stdout"));
+    let mut line = String::new();
+    child_out.read_line(&mut line).expect("read line");
+    assert_eq!(line.trim(), "ready");
 
     let pid = child.id();
     let logdir = tempdir().expect("logdir");
