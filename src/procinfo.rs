@@ -9,6 +9,7 @@ pub struct ProcState {
     pub prev_proc_time: u64,
     pub prev_total_time: u64,
     pub fds: HashMap<i32, String>,
+    pub pending_fd_events: Vec<FdEvent>,
 }
 
 pub fn pid_uid(pid: u32) -> Option<u32> {
