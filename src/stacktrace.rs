@@ -21,6 +21,10 @@ thread_local! {
 }
 
 fn get_loader(path: &str) -> Option<Rc<Loader>> {
+    if path.starts_with("[") {
+        return None;
+    }
+
     let mtime = fs::metadata(path).and_then(|m| m.modified()).ok();
     LOADER_CACHE.with(|cache| {
         let mut map = cache.borrow_mut();
