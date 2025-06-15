@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
+use log::warn;
 use serde::Deserialize;
 use std::fs;
-use toml::Value;
 
 #[derive(Parser)]
 #[command(name = "fuzmon")]
@@ -44,6 +44,7 @@ pub struct RunArgs {
 }
 
 #[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FilterConfig {
     #[serde(default)]
     pub target_user: Option<String>,
@@ -52,6 +53,7 @@ pub struct FilterConfig {
 }
 
 #[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OutputConfig {
     #[serde(default)]
     pub format: Option<String>,
@@ -62,6 +64,7 @@ pub struct OutputConfig {
 }
 
 #[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MonitorConfig {
     #[serde(default)]
     pub interval_sec: Option<u64>,
@@ -72,6 +75,7 @@ pub struct MonitorConfig {
 }
 
 #[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub filter: FilterConfig,
@@ -81,15 +85,15 @@ pub struct Config {
     pub monitor: MonitorConfig,
 }
 
-pub fn load_config(path: &str) -> Result<Config, String> {
-    let data = fs::read_to_string(path)
-        .map_err(|e| format!("failed to read {}: {}", path, e))?;
-    let value: Value = data
-        .parse()
-        .map_err(|e| format!("failed to parse {}: {}", path, e))?;
-    value
-        .try_into()
-        .map_err(|e| format!("failed to parse {}: {}", path, e))
+pub fn load_config(path: &str) -> Config {
+    let data = fs::read_to_string(path).unwrap_or_else(|e| {
+        warn!("failed to read {}: {}", path, e);
+        panic!("failed to read {}: {}", path, e);
+    });
+    toml::from_str(&data).unwrap_or_else(|e| {
+        warn!("failed to parse {}: {}", path, e);
+        panic!("failed to parse {}: {}", path, e);
+    })
 }
 
 pub fn uid_from_name(name: &str) -> Option<u32> {
@@ -141,7 +145,7 @@ mod tests {
 
     #[test]
     fn load_example_config() {
-        let cfg = load_config("ai_docs/example_config.toml").expect("load config");
+        let cfg = load_config("ai_docs/example_config.toml");
         assert_eq!(cfg.output.format.as_deref(), Some("json"));
         assert_eq!(cfg.output.path.as_deref(), Some("/var/log/fuzmon/"));
         assert_eq!(cfg.output.compress, Some(true));
@@ -156,10 +160,10 @@ mod tests {
         let tmp = NamedTempFile::new().expect("tmp");
         fs::write(
             tmp.path(),
-            "target_user = \"hoge\"\n[output]\npath = \"/tmp/a\"",
+            "[filter]\ntarget_user = \"hoge\"\n[output]\npath = \"/tmp/a\"",
         )
         .unwrap();
-        let cfg = load_config(tmp.path().to_str().unwrap()).expect("load config");
+        let cfg = load_config(tmp.path().to_str().unwrap());
         let args = RunArgs {
             target_user: Some("foo".into()),
             output: Some("/tmp/b".into()),
@@ -182,11 +186,38 @@ mod tests {
     }
 
     #[test]
-    fn invalid_config_returns_error() {
+    fn invalid_config_panics() {
         let tmp = NamedTempFile::new().expect("tmp");
         fs::write(tmp.path(), "[filter]\nignore_process_name = false").unwrap();
-        let err = load_config(tmp.path().to_str().unwrap()).err().unwrap();
-        assert!(err.contains("ignore_process_name"));
-        assert!(err.contains("invalid type"));
+        let result = std::panic::catch_unwind(|| load_config(tmp.path().to_str().unwrap()));
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        let msg = if let Some(s) = err.downcast_ref::<String>() {
+            s.as_str()
+        } else if let Some(s) = err.downcast_ref::<&str>() {
+            *s
+        } else {
+            ""
+        };
+        assert!(msg.contains("ignore_process_name"));
+        assert!(msg.contains("invalid type"));
+    }
+
+    #[test]
+    fn unknown_field_panics() {
+        let tmp = NamedTempFile::new().expect("tmp");
+        fs::write(tmp.path(), "[output]\nfoo=1").unwrap();
+        let result = std::panic::catch_unwind(|| load_config(tmp.path().to_str().unwrap()));
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        let msg = if let Some(s) = err.downcast_ref::<String>() {
+            s.as_str()
+        } else if let Some(s) = err.downcast_ref::<&str>() {
+            *s
+        } else {
+            ""
+        };
+        assert!(msg.contains("foo"));
+        assert!(msg.contains("unknown field"));
     }
 }
