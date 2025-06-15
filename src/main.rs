@@ -25,8 +25,8 @@ use crate::config::{
     Cli, Commands, Config, RunArgs, load_config, merge_config, parse_cli, uid_from_name,
 };
 use crate::procinfo::{
-    ProcState, detect_fd_events, get_proc_usage, pid_uid, process_name, read_pids, rss_kb,
-    should_suppress, swap_kb, vsz_kb,
+    ProcState, cmdline, detect_fd_events, environ, get_proc_usage, pid_uid, process_name,
+    read_pids, rss_kb, should_suppress, swap_kb, vsz_kb,
 };
 use crate::stacktrace::{capture_c_stack_traces, capture_python_stack_traces};
 use clap::CommandFactory;
@@ -46,6 +46,10 @@ struct LogEntry {
     process_name: String,
     cpu_time_percent: f64,
     memory: MemoryInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cmdline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    env: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     fd_events: Option<Vec<FdLogEvent>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -75,6 +79,7 @@ fn main() {
         match cmd {
             Commands::Run(args) => run(args),
             Commands::Dump(args) => dump(&args.path),
+            Commands::Report(args) => report(&args.path),
         }
     } else {
         Cli::command().print_help().unwrap();
@@ -178,6 +183,20 @@ fn run(args: RunArgs) {
             break;
         }
     }
+    if term.load(Ordering::SeqCst) {
+        monitor_iteration(
+            &mut states,
+            target_pid,
+            target_uid,
+            &ignore_patterns,
+            record_cpu_percent_threshold,
+            stacktrace_cpu_percent_threshold,
+            output_dir,
+            use_msgpack,
+            compress,
+            verbose,
+        );
+    }
 }
 
 fn monitor_iteration(
@@ -196,7 +215,7 @@ fn monitor_iteration(
     if verbose {
         println!("Found {} PIDs", pids.len());
     }
-    prune_states(states, &pids);
+    prune_states(states, &pids, output_dir, use_msgpack, compress);
     for pid in &pids {
         process_pid(
             *pid,
@@ -227,12 +246,49 @@ fn collect_pids(target_pid: Option<u32>, target_uid: Option<u32>) -> Vec<u32> {
     pids
 }
 
-fn prune_states(states: &mut HashMap<u32, ProcState>, pids: &[u32]) {
+fn prune_states(
+    states: &mut HashMap<u32, ProcState>,
+    pids: &[u32],
+    output_dir: Option<&str>,
+    use_msgpack: bool,
+    compress: bool,
+) {
     let existing: Vec<u32> = states.keys().copied().collect();
     let pid_set: HashSet<u32> = pids.iter().copied().collect();
     for old in &existing {
         if !pid_set.contains(old) {
-            states.remove(old);
+            if let Some(mut state) = states.remove(old) {
+                if let Some(dir) = output_dir {
+                    let events: Vec<FdLogEvent> = state
+                        .fds
+                        .drain()
+                        .map(|(fd, path)| FdLogEvent {
+                            fd,
+                            event: "close".into(),
+                            path,
+                        })
+                        .collect();
+                    if !events.is_empty() {
+                        let entry = LogEntry {
+                            timestamp: Utc::now()
+                                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                            pid: *old,
+                            process_name: process_name(*old).unwrap_or_else(|| "?".into()),
+                            cpu_time_percent: 0.0,
+                            memory: MemoryInfo {
+                                rss_kb: 0,
+                                vsz_kb: 0,
+                                swap_kb: 0,
+                            },
+                            cmdline: None,
+                            env: None,
+                            fd_events: Some(events),
+                            threads: Vec::new(),
+                        };
+                        write_log(dir, &entry, use_msgpack, compress);
+                    }
+                }
+            }
             info!("process {} disappeared", old);
         }
     }
@@ -301,6 +357,7 @@ fn process_pid(
     if let Some(dir) = output_dir {
         let entry = build_log_entry(
             pid,
+            state,
             cpu,
             rss,
             fd_log_events,
@@ -337,6 +394,7 @@ fn should_skip_pid(
 
 fn build_log_entry(
     pid: u32,
+    state: &mut ProcState,
     cpu_percent: f32,
     rss: u64,
     fd_events: Vec<FdLogEvent>,
@@ -352,6 +410,8 @@ fn build_log_entry(
             vsz_kb: vsz_kb(pid).unwrap_or(0),
             swap_kb: swap_kb(pid).unwrap_or(0),
         },
+        cmdline: None,
+        env: None,
         fd_events: if fd_events.is_empty() {
             None
         } else {
@@ -359,6 +419,11 @@ fn build_log_entry(
         },
         threads: Vec::new(),
     };
+    if !state.metadata_written {
+        entry.cmdline = cmdline(pid);
+        entry.env = environ(pid);
+        state.metadata_written = true;
+    }
     if cpu_percent >= stacktrace_cpu_percent_threshold as f32 {
         let name = &entry.process_name;
         let mut c_traces = capture_c_stack_traces(pid as i32);
@@ -526,5 +591,67 @@ fn dump_file(path: &Path) {
             }
         }
         Err(e) => eprintln!("failed to read {}: {}", path.display(), e),
+    }
+}
+
+fn report(path: &str) {
+    let file_path = Path::new(path);
+    match read_log_entries(file_path) {
+        Ok(entries) => {
+            if entries.is_empty() {
+                println!("<p>No entries</p>");
+                return;
+            }
+            let mut sorted = entries;
+            sorted.sort_by_key(|e| e.timestamp.clone());
+            let first = &sorted[0];
+            let pid = first.pid;
+            let cmd = first.cmdline.clone().unwrap_or_else(|| "(unknown)".into());
+            let env = first.env.clone();
+            let start = chrono::DateTime::parse_from_rfc3339(&first.timestamp)
+                .map(|t| t.with_timezone(&Utc))
+                .unwrap();
+            let end = chrono::DateTime::parse_from_rfc3339(&sorted.last().unwrap().timestamp)
+                .map(|t| t.with_timezone(&Utc))
+                .unwrap();
+            let total_time = (end - start).num_seconds();
+            let mut cpu = 0.0f64;
+            let mut peak_rss = 0u64;
+            for win in sorted.windows(2) {
+                if let [a, b] = win {
+                    let ta = chrono::DateTime::parse_from_rfc3339(&a.timestamp)
+                        .map(|t| t.with_timezone(&Utc))
+                        .unwrap();
+                    let tb = chrono::DateTime::parse_from_rfc3339(&b.timestamp)
+                        .map(|t| t.with_timezone(&Utc))
+                        .unwrap();
+                    let dt = (tb - ta).num_seconds() as f64;
+                    cpu += a.cpu_time_percent * dt / 100.0;
+                }
+            }
+            for e in &sorted {
+                peak_rss = peak_rss.max(e.memory.rss_kb);
+            }
+            println!("<html><body>");
+            println!("<h1>Report for PID {}</h1>", pid);
+            println!("<p>Command: {}</p>", html_escape::encode_text(&cmd));
+            println!("<ul>");
+            println!("<li>Total runtime: {} sec</li>", total_time);
+            println!("<li>Total CPU time: {:.1} sec</li>", cpu);
+            println!("<li>Peak RSS: {} KB</li>", peak_rss);
+            println!("</ul>");
+            if let Some(e) = env {
+                if !e.is_empty() {
+                    println!(
+                        "<details><summary>Environment</summary><pre>{}</pre></details>",
+                        html_escape::encode_text(&e)
+                    );
+                }
+            } else {
+                println!("<p>Environment: unknown</p>");
+            }
+            println!("</body></html>");
+        }
+        Err(e) => warn!("failed to read {}: {}", file_path.display(), e),
     }
 }

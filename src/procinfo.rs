@@ -16,6 +16,7 @@ pub struct ProcState {
     pub prev_total_time: u64,
     pub fds: HashMap<i32, String>,
     pub pending_fd_events: Vec<FdEvent>,
+    pub metadata_written: bool,
 }
 
 pub fn pid_uid(pid: u32) -> Option<u32> {
@@ -150,6 +151,26 @@ pub fn vsz_kb(pid: u32) -> Option<u64> {
 
 pub fn swap_kb(pid: u32) -> Option<u64> {
     read_status_value(pid, "VmSwap:")
+}
+
+pub fn cmdline(pid: u32) -> Option<String> {
+    fs::read(format!("/proc/{}/cmdline", pid)).ok().map(|data| {
+        data.split(|&b| b == 0)
+            .filter_map(|s| std::str::from_utf8(s).ok())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<&str>>()
+            .join(" ")
+    })
+}
+
+pub fn environ(pid: u32) -> Option<String> {
+    fs::read(format!("/proc/{}/environ", pid)).ok().map(|data| {
+        data.split(|&b| b == 0)
+            .filter_map(|s| std::str::from_utf8(s).ok())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<&str>>()
+            .join("\n")
+    })
 }
 
 fn read_total_cpu_time() -> Option<u64> {
