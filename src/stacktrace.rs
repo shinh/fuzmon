@@ -1,13 +1,55 @@
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::fs;
-use log::warn;
 use addr2line::Loader;
-use object::{Object, ObjectKind};
+use log::{info, warn};
 use nix::sys::{ptrace, wait::waitpid};
 use nix::unistd::Pid;
+use object::{Object, ObjectKind};
 use py_spy::{Config as PySpyConfig, PythonSpy};
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fs;
+use std::rc::Rc;
+use std::time::SystemTime;
 
+struct CachedLoader {
+    loader: Rc<Loader>,
+    mtime: Option<SystemTime>,
+}
+
+thread_local! {
+    static LOADER_CACHE: RefCell<HashMap<String, CachedLoader>> = RefCell::new(HashMap::new());
+}
+
+fn get_loader(path: &str) -> Option<Rc<Loader>> {
+    let mtime = fs::metadata(path).and_then(|m| m.modified()).ok();
+    LOADER_CACHE.with(|cache| {
+        let mut map = cache.borrow_mut();
+        if let Some(entry) = map.get(path) {
+            if entry.mtime == mtime {
+                return Some(entry.loader.clone());
+            }
+            map.remove(path);
+        }
+        match Loader::new(path) {
+            Ok(loader) => {
+                info!("load debug symbols from {}", path);
+                let rc = Rc::new(loader);
+                map.insert(
+                    path.to_string(),
+                    CachedLoader {
+                        loader: rc.clone(),
+                        mtime,
+                    },
+                );
+                Some(rc)
+            }
+            Err(e) => {
+                warn!("Loader::new {} failed: {}", path, e);
+                None
+            }
+        }
+    })
+}
 
 pub struct ExeInfo {
     pub start: u64,
@@ -16,11 +58,10 @@ pub struct ExeInfo {
 }
 
 pub struct Module {
-    pub loader: Loader,
+    pub loader: Rc<Loader>,
     pub info: ExeInfo,
     pub is_pic: bool,
 }
-
 
 pub fn load_loaders(pid: i32) -> Vec<Module> {
     let maps = match fs::read_to_string(format!("/proc/{}/maps", pid)) {
@@ -33,12 +74,24 @@ pub fn load_loaders(pid: i32) -> Vec<Module> {
     let mut infos: HashMap<String, ExeInfo> = HashMap::new();
     for line in maps.lines() {
         let mut parts = line.split_whitespace();
-        let range = match parts.next() { Some(v) => v, None => continue };
-        let _perms = match parts.next() { Some(v) => v, None => continue };
-        let offset = match parts.next() { Some(v) => v, None => continue };
+        let range = match parts.next() {
+            Some(v) => v,
+            None => continue,
+        };
+        let _perms = match parts.next() {
+            Some(v) => v,
+            None => continue,
+        };
+        let offset = match parts.next() {
+            Some(v) => v,
+            None => continue,
+        };
         let _dev = parts.next();
         let _inode = parts.next();
-        let path = match parts.next() { Some(v) => v, None => continue };
+        let path = match parts.next() {
+            Some(v) => v,
+            None => continue,
+        };
         if let Some((start, end)) = range.split_once('-') {
             if let (Ok(start_addr), Ok(end_addr), Ok(off)) = (
                 u64::from_str_radix(start, 16),
@@ -62,26 +115,27 @@ pub fn load_loaders(pid: i32) -> Vec<Module> {
     }
     let mut modules = Vec::new();
     for (path, info) in infos {
-        match Loader::new(&path) {
-            Ok(loader) => {
-                match fs::read(&path) {
-                    Ok(data) => match object::File::parse(&*data) {
-                        Ok(obj) => {
-                            let is_pic = matches!(obj.kind(), ObjectKind::Dynamic);
-                            modules.push(Module { loader, info, is_pic });
-                        }
-                        Err(e) => warn!("parse {} failed: {}", path, e),
-                    },
-                    Err(e) => warn!("read {} failed: {}", path, e),
-                }
+        if let Some(loader) = get_loader(&path) {
+            match fs::read(&path) {
+                Ok(data) => match object::File::parse(&*data) {
+                    Ok(obj) => {
+                        let is_pic = matches!(obj.kind(), ObjectKind::Dynamic);
+                        modules.push(Module {
+                            loader,
+                            info,
+                            is_pic,
+                        });
+                    }
+                    Err(e) => warn!("parse {} failed: {}", path, e),
+                },
+                Err(e) => warn!("read {} failed: {}", path, e),
             }
-            Err(e) => warn!("Loader::new {} failed: {}", path, e),
         }
     }
     modules
 }
 
-fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64, is_pic: bool) -> Option<String> {
+fn describe_addr(loader: &Rc<Loader>, info: &ExeInfo, addr: u64, is_pic: bool) -> Option<String> {
     if addr < info.start || addr >= info.end {
         return None;
     }
@@ -119,7 +173,11 @@ fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64, is_pic: bool) -> Op
             info_str.push_str(sym);
         }
     }
-    if info_str.is_empty() { None } else { Some(info_str) }
+    if info_str.is_empty() {
+        None
+    } else {
+        Some(info_str)
+    }
 }
 
 fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
@@ -143,7 +201,6 @@ fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
 
     Ok(addrs)
 }
-
 
 pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
     let target = Pid::from_raw(pid);
