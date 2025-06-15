@@ -15,7 +15,7 @@ use crate::procinfo::{
     read_pids, pid_uid, get_proc_usage, ProcState, should_suppress, process_name,
     proc_cpu_time_sec, proc_cpu_jiffies, vsz_kb, swap_kb,
 };
-use crate::stacktrace::{attach_and_trace, capture_stack_trace, capture_python_stack_trace};
+use crate::stacktrace::{capture_stack_trace, capture_python_stack_trace};
 
 #[derive(Serialize)]
 struct MemoryInfo {
@@ -60,13 +60,8 @@ fn main() {
         let _ = fs::create_dir_all(dir);
     }
 
-    if let Some(pid) = args.pid {
-        if let Err(e) = attach_and_trace(pid) {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
+
+    let target_pid = args.pid.map(|p| p as u32);
 
     let target_uid = config
         .filter
@@ -85,19 +80,27 @@ fn main() {
 
     let mut states: HashMap<u32, ProcState> = HashMap::new();
     loop {
-        let mut pids = read_pids();
-        if let Some(uid) = target_uid {
-            pids.retain(|p| pid_uid(*p) == Some(uid));
+        let mut pids = if let Some(pid) = target_pid {
+            vec![pid]
+        } else {
+            read_pids()
+        };
+        if target_pid.is_none() {
+            if let Some(uid) = target_uid {
+                pids.retain(|p| pid_uid(*p) == Some(uid));
+            }
         }
         println!("Found {} PIDs", pids.len());
         for pid in &pids {
-            if let Some(name) = process_name(*pid) {
-                if ignore_patterns.iter().any(|re| re.is_match(&name)) {
+            if target_pid.is_none() {
+                if let Some(name) = process_name(*pid) {
+                    if ignore_patterns.iter().any(|re| re.is_match(&name)) {
+                        continue;
+                    }
+                }
+                if proc_cpu_jiffies(*pid).unwrap_or(0) < cpu_jiffies_threshold {
                     continue;
                 }
-            }
-            if proc_cpu_jiffies(*pid).unwrap_or(0) < cpu_jiffies_threshold {
-                continue;
             }
             let state = states.entry(*pid).or_default();
             if let Some((cpu, rss)) = get_proc_usage(*pid, state) {
@@ -119,7 +122,7 @@ fn main() {
                         },
                         stacktrace: None,
                     };
-                    if cpu < 1.0 {
+                    if target_pid == Some(*pid) || cpu < 1.0 {
                         let name = &entry.process_name;
                         if name.starts_with("python") {
                             match capture_python_stack_trace(*pid as i32) {

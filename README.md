@@ -7,6 +7,8 @@ Python processes are traced using an embedded `py-spy` integration when possible
 ```
 fuzmon -o logs/             # write logs under ./logs
 fuzmon -c config.toml       # use configuration file
+# monitor a specific PID and write logs
+fuzmon -p 1234 -o logs/
 # logs default to /tmp/fuzmon when -o not specified
 ```
 
