@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
 use tempfile::tempdir;
@@ -10,14 +11,13 @@ fn python_stack_trace_contains_functions() {
     fs::write(
         &script,
         r#"
-import time
+import sys
 
 def foo():
     bar()
 
 def bar():
-    while True:
-        time.sleep(1)
+    sys.stdin.readline()
 
 if __name__ == '__main__':
     foo()
@@ -27,9 +27,11 @@ if __name__ == '__main__':
 
     let mut child = Command::new("python3")
         .arg(&script)
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()
         .expect("spawn python");
+    let mut child_in = child.stdin.take().expect("child stdin");
 
     thread::sleep(Duration::from_millis(500));
     let pid = child.id();
@@ -48,10 +50,19 @@ if __name__ == '__main__':
         .expect("run fuzmon");
 
     thread::sleep(Duration::from_millis(800));
+    let plain = logdir.path().join(format!("{}.jsonl", pid));
+    let zst = logdir.path().join(format!("{}.jsonl.zst", pid));
+    for _ in 0..80 {
+        if plain.exists() || zst.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
     let _ = mon.kill();
     let _ = mon.wait();
 
-    let _ = child.kill();
+    child_in.write_all(b"\n").unwrap();
+    drop(child_in);
     let _ = child.wait();
 
     let plain = logdir.path().join(format!("{}.jsonl", pid));
