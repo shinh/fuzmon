@@ -18,7 +18,10 @@ use crate::procinfo::{
     read_pids, pid_uid, get_proc_usage, ProcState, should_suppress, process_name,
     proc_cpu_time_sec, proc_cpu_jiffies, vsz_kb, swap_kb, detect_fd_events,
 };
-use crate::stacktrace::{capture_stack_trace, capture_python_stack_trace};
+use crate::stacktrace::{
+    capture_stack_traces,
+    capture_python_stack_traces,
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct MemoryInfo {
@@ -36,8 +39,8 @@ struct LogEntry {
     memory: MemoryInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     fd_events: Option<Vec<FdLogEvent>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stacktrace: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    stacktrace: Vec<Option<Vec<String>>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -221,21 +224,19 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
             swap_kb: swap_kb(pid).unwrap_or(0),
         },
         fd_events: if fd_events.is_empty() { None } else { Some(fd_events) },
-        stacktrace: None,
+        stacktrace: Vec::new(),
     };
     if cpu < 1.0 {
         let name = &entry.process_name;
         if name.starts_with("python") {
-            match capture_python_stack_trace(pid as i32) {
-                Ok(t) => entry.stacktrace = Some(t),
+            match capture_python_stack_traces(pid as i32) {
+                Ok(t) => entry.stacktrace = t,
                 Err(_) => {
-                    if let Ok(t) = capture_stack_trace(pid as i32) {
-                        entry.stacktrace = Some(t);
-                    }
+                    entry.stacktrace = capture_stack_traces(pid as i32);
                 }
             }
-        } else if let Ok(trace) = capture_stack_trace(pid as i32) {
-            entry.stacktrace = Some(trace);
+        } else {
+            entry.stacktrace = capture_stack_traces(pid as i32);
         }
     }
     entry

@@ -21,6 +21,6 @@ Each line in the log file is a JSON object similar to:
   "process_name": "python3",
   "cpu_time_sec": 12.3,
   "memory": { "rss_kb": 20480, "vsz_kb": 105000, "swap_kb": 0 },
-  "stacktrace": [ " 0: 0xdeadbeef main at main.c:42" ]
+  "stacktrace": [[" 0: 0xdeadbeef main at main.c:42"]]
 }
 ```
