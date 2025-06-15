@@ -33,13 +33,13 @@ struct LogEntry {
     cpu_time_sec: f64,
     memory: MemoryInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
+    fd_events: Option<Vec<FdLogEvent>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stacktrace: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
 struct FdLogEvent {
-    timestamp: String,
-    pid: u32,
     fd: i32,
     event: String,
     path: String,
@@ -145,48 +145,37 @@ fn monitor_iteration(
             continue;
         }
         let state = states.entry(*pid).or_default();
-        let fd_events = detect_fd_events(*pid, state);
-        if let Some(dir) = output_dir {
-            for ev in &fd_events {
-                if let Some(old_path) = &ev.old_path {
-                    let entry = FdLogEvent {
-                        timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                        pid: *pid,
-                        fd: ev.fd,
-                        event: "close".into(),
-                        path: old_path.clone(),
-                    };
-                    if verbose {
-                        if let Ok(line) = serde_json::to_string(&entry) {
-                            println!("{}", line);
-                        }
-                    }
-                    write_fd_event(dir, &entry, use_msgpack);
-                }
-                if let Some(new_path) = &ev.new_path {
-                    let entry = FdLogEvent {
-                        timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                        pid: *pid,
-                        fd: ev.fd,
-                        event: "open".into(),
-                        path: new_path.clone(),
-                    };
-                    if verbose {
-                        if let Ok(line) = serde_json::to_string(&entry) {
-                            println!("{}", line);
-                        }
-                    }
-                    write_fd_event(dir, &entry, use_msgpack);
-                }
-            }
-        }
+        let raw_events = detect_fd_events(*pid, state);
+        state.pending_fd_events.extend(raw_events);
         if let Some((cpu, rss)) = get_proc_usage(*pid, state) {
+            let fd_log_events: Vec<FdLogEvent> = state
+                .pending_fd_events
+                .drain(..)
+                .flat_map(|ev| {
+                    let mut events = Vec::new();
+                    if let Some(old_path) = ev.old_path {
+                        events.push(FdLogEvent {
+                            fd: ev.fd,
+                            event: "close".into(),
+                            path: old_path,
+                        });
+                    }
+                    if let Some(new_path) = ev.new_path {
+                        events.push(FdLogEvent {
+                            fd: ev.fd,
+                            event: "open".into(),
+                            path: new_path,
+                        });
+                    }
+                    events
+                })
+                .collect();
             if verbose && !should_suppress(cpu, rss) {
                 println!("PID {:>5}: {:>5.1}% CPU, {:>8} KB RSS", pid, cpu, rss);
             }
 
             if let Some(dir) = output_dir {
-                let entry = build_log_entry(*pid, cpu, rss);
+                let entry = build_log_entry(*pid, cpu, rss, fd_log_events);
                 if verbose {
                     if let Ok(line) = serde_json::to_string(&entry) {
                         println!("{}", line);
@@ -218,7 +207,7 @@ fn should_skip_pid(
     false
 }
 
-fn build_log_entry(pid: u32, cpu: f32, rss: u64) -> LogEntry {
+fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> LogEntry {
     let mut entry = LogEntry {
         timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         pid,
@@ -229,6 +218,7 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64) -> LogEntry {
             vsz_kb: vsz_kb(pid).unwrap_or(0),
             swap_kb: swap_kb(pid).unwrap_or(0),
         },
+        fd_events: if fd_events.is_empty() { None } else { Some(fd_events) },
         stacktrace: None,
     };
     if cpu < 1.0 {
@@ -275,14 +265,3 @@ fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
     }
 }
 
-fn write_fd_event(dir: &str, entry: &FdLogEvent, use_msgpack: bool) {
-    let path = format!("{}/{}.log", dir.trim_end_matches('/'), entry.pid);
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-        if use_msgpack {
-            let _ = write_named(&mut file, entry);
-        } else {
-            let _ = serde_json::to_writer(&mut file, entry);
-            let _ = file.write_all(b"\n");
-        }
-    }
-}
