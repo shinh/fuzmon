@@ -5,7 +5,6 @@ use object::{Object, ObjectKind};
 use nix::sys::{ptrace, wait::waitpid};
 use nix::unistd::Pid;
 use py_spy::{Config as PySpyConfig, PythonSpy};
-use crate::procinfo::process_name;
 
 
 pub struct ExeInfo {
@@ -111,25 +110,6 @@ fn get_stack_trace(pid: Pid, max_frames: usize) -> nix::Result<Vec<u64>> {
     Ok(addrs)
 }
 
-pub fn attach_and_trace(pid: i32) -> nix::Result<()> {
-    if let Some(name) = process_name(pid as u32) {
-        if name.starts_with("python") {
-            if let Ok(trace) = capture_python_stack_trace(pid) {
-                println!("Stack trace for pid {}:", pid);
-                for line in trace {
-                    println!("{}", line);
-                }
-                return Ok(());
-            }
-        }
-    }
-    let trace = capture_stack_trace(pid)?;
-    println!("Stack trace for pid {}:", pid);
-    for line in trace {
-        println!("{}", line);
-    }
-    Ok(())
-}
 
 pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
     let target = Pid::from_raw(pid);
