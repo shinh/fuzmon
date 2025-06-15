@@ -367,7 +367,6 @@ mod tests {
         assert!(get_module(exe.to_str().unwrap()).is_none());
         assert!(get_module(exe.to_str().unwrap()).is_none());
 
-        std::thread::sleep(std::time::Duration::from_millis(1100));
         let src = dir.path().join("t.c");
         std::fs::write(&src, "int main(){return 0;}").unwrap();
         let status = Command::new("gcc")
