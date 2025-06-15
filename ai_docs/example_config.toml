@@ -11,3 +11,4 @@ compress = true
 [monitor]
 interval_sec = 60
 cpu_time_percent_threshold = 1.0
+stacktrace_percent_threshold = 1.0

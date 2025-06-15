@@ -44,7 +44,10 @@ fn get_module(path: &str) -> Option<Rc<ModuleData>> {
             if entry.mtime == mtime {
                 return entry.module.clone();
             }
-            info!("mmaped file {} mtime changed, reloading: old_mtime={:?} new_mtime={:?}", path, entry.mtime, mtime);
+            info!(
+                "mmaped file {} mtime changed, reloading: old_mtime={:?} new_mtime={:?}",
+                path, entry.mtime, mtime
+            );
             map.remove(path);
         }
         let mut header = [0u8; 4];
@@ -53,7 +56,10 @@ fn get_module(path: &str) -> Option<Rc<ModuleData>> {
                 if header != [0x7f, b'E', b'L', b'F'] {
                     map.insert(
                         path.to_string(),
-                        CachedModule { module: None, mtime },
+                        CachedModule {
+                            module: None,
+                            mtime,
+                        },
                     );
                     return None;
                 }
@@ -62,7 +68,10 @@ fn get_module(path: &str) -> Option<Rc<ModuleData>> {
                 warn!("read {} failed: {}", path, e);
                 map.insert(
                     path.to_string(),
-                    CachedModule { module: None, mtime },
+                    CachedModule {
+                        module: None,
+                        mtime,
+                    },
                 );
                 return None;
             }
@@ -80,7 +89,10 @@ fn get_module(path: &str) -> Option<Rc<ModuleData>> {
                     },
                     Err(e) => warn!("read {} failed: {}", path, e),
                 }
-                let rc = Rc::new(ModuleData { loader: Rc::new(loader), is_pic });
+                let rc = Rc::new(ModuleData {
+                    loader: Rc::new(loader),
+                    is_pic,
+                });
                 map.insert(
                     path.to_string(),
                     CachedModule {
@@ -94,7 +106,10 @@ fn get_module(path: &str) -> Option<Rc<ModuleData>> {
                 warn!("Loader::new {} failed: {}", path, e);
                 map.insert(
                     path.to_string(),
-                    CachedModule { module: None, mtime },
+                    CachedModule {
+                        module: None,
+                        mtime,
+                    },
                 );
                 None
             }

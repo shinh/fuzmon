@@ -1,5 +1,5 @@
-use std::process::{Command, Stdio};
 use std::fs;
+use std::process::{Command, Stdio};
 use tempfile::tempdir;
 
 mod common;
@@ -70,12 +70,8 @@ int main() {
 
 #[test]
 fn symbolized_stack_trace_contains_function() {
-    run_symbol_test(
-        &["-g", "-O0"],
-        &["target_function", "main", "testprog.c"],
-    );
+    run_symbol_test(&["-g", "-O0"], &["target_function", "main", "testprog.c"]);
 }
-
 
 #[test]
 fn symbolized_stack_trace_contains_function_no_pie() {
@@ -87,24 +83,15 @@ fn symbolized_stack_trace_contains_function_no_pie() {
 
 #[test]
 fn symbolized_stack_trace_contains_function_no_debug() {
-    run_symbol_test(
-        &["-O0"],
-        &["target_function", "main"],
-    );
+    run_symbol_test(&["-O0"], &["target_function", "main"]);
 }
 
 #[test]
 fn symbolized_stack_trace_contains_function_g1() {
-    run_symbol_test(
-        &["-g1", "-O0"],
-        &["target_function", "main", "testprog.c"],
-    );
+    run_symbol_test(&["-g1", "-O0"], &["target_function", "main", "testprog.c"]);
 }
 
 #[test]
 fn symbolized_stack_trace_contains_function_o2() {
-    run_symbol_test(
-        &["-g", "-O2"],
-        &["target_function", "main", "testprog.c"],
-    );
+    run_symbol_test(&["-g", "-O2"], &["target_function", "main", "testprog.c"]);
 }

@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::fs;
-use std::process::{Command, Stdio};
 use std::io::Write;
+use std::process::{Command, Stdio};
 use std::{thread, time::Duration};
 use tempfile::tempdir;
 
