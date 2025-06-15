@@ -190,4 +190,40 @@ foo()
     assert!(trace_path.exists());
     let trace = fs::read_to_string(trace_path).unwrap();
     assert!(trace.contains("traceEvents"), "{}", trace);
+    let html = fs::read_to_string(outdir.path().join("index.html")).unwrap();
+    assert!(
+        html.contains(&format!("<a href=\"{}_trace.json\"", pid)),
+        "{}",
+        html
+    );
+}
+
+#[test]
+fn no_trace_link_without_stacktrace() {
+    let dir = tempdir().expect("dir");
+    let pid = 4242;
+    let log_path = dir.path().join(format!("{pid}.jsonl"));
+    fs::write(
+        &log_path,
+        format!(
+            "{{\"timestamp\":\"2025-06-14T00:00:00Z\",\"pid\":{pid},\"process_name\":\"sleep\",\"cpu_time_percent\":0.0,\"memory\":{{\"rss_kb\":1000,\"vsz_kb\":0,\"swap_kb\":0}}}}\n"
+        ),
+    )
+    .unwrap();
+
+    let outdir = tempdir().expect("outdir");
+    let out = Command::new(env!("CARGO_BIN_EXE_fuzmon"))
+        .args([
+            "report",
+            log_path.to_str().unwrap(),
+            "-o",
+            outdir.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("run report");
+    assert!(out.status.success());
+    let trace_path = outdir.path().join(format!("{pid}_trace.json"));
+    assert!(!trace_path.exists());
+    let html = fs::read_to_string(outdir.path().join("index.html")).unwrap();
+    assert!(!html.contains(&format!("{}_trace.json", pid)), "{}", html);
 }

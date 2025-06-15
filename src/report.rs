@@ -286,11 +286,13 @@ fn write_graphs(entries: &[LogEntry], out_dir: &Path, pid: u32) {
     }
 }
 
-fn write_trace(entries: &[LogEntry], out_dir: &Path, pid: u32) {
+fn write_trace(entries: &[LogEntry], out_dir: &Path, pid: u32) -> bool {
     let path = out_dir.join(format!("{}_trace.json", pid));
     if let Err(e) = write_chrome_trace(entries, &path) {
         warn!("failed to write {}: {}", path.display(), e);
+        return false;
     }
+    path.exists()
 }
 
 fn truncate(s: &str, len: usize) -> String {
@@ -305,7 +307,7 @@ fn truncate(s: &str, len: usize) -> String {
     out
 }
 
-fn render_single(s: &Stats) -> String {
+fn render_single(s: &Stats, has_trace: bool) -> String {
     let mut out = String::new();
     out.push_str("<html><body>\n");
     out.push_str(&format!("<h1>Report for PID {}</h1>\n", s.pid));
@@ -334,6 +336,12 @@ fn render_single(s: &Stats) -> String {
         "<p>RSS<br><img src=\"{}_rss.svg\" alt=\"RSS graph\" /></p>\n",
         s.pid
     ));
+    if has_trace {
+        out.push_str(&format!(
+            "<p><a href=\"{}_trace.json\">Trace JSON</a></p>\n",
+            s.pid
+        ));
+    }
     out.push_str("</body></html>\n");
     out
 }
@@ -371,8 +379,8 @@ fn report_file(path: &Path, out_dir: &Path) {
         Ok(entries) => {
             if let Some(s) = calc_stats(path, &entries) {
                 write_graphs(&entries, out_dir, s.pid);
-                write_trace(&entries, out_dir, s.pid);
-                let html = render_single(&s);
+                let has_trace = write_trace(&entries, out_dir, s.pid);
+                let html = render_single(&s, has_trace);
                 let index = out_dir.join("index.html");
                 if let Err(e) = fs::write(&index, html) {
                     warn!("failed to write {}: {}", index.display(), e);
@@ -452,8 +460,8 @@ fn report_dir(path: &Path, out_dir: &Path, top_cpu: usize, top_rss: usize) {
             Ok(entries) => {
                 if let Some(stats) = calc_stats(Path::new(&s.path), &entries) {
                     write_graphs(&entries, out_dir, s.pid);
-                    write_trace(&entries, out_dir, s.pid);
-                    let html = render_single(&stats);
+                    let has_trace = write_trace(&entries, out_dir, s.pid);
+                    let html = render_single(&stats, has_trace);
                     let out = out_dir.join(format!("{}.html", s.pid));
                     if let Err(e) = fs::write(&out, html) {
                         warn!("failed to write {}: {}", out.display(), e);
