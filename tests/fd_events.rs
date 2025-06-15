@@ -114,7 +114,6 @@ sys.stdin.readline()
     } else {
         fs::read_to_string(path).unwrap_or_default()
     };
-    let logfile = file_path.to_str().unwrap();
     assert!(
         log_content.contains("\"event\":\"open\""),
         "{}",
