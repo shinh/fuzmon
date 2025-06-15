@@ -133,7 +133,9 @@ fn run(args: RunArgs) {
                 info!("spawned {} as pid {}", args.command[0], target_pid.unwrap());
             }
             Err(e) => {
-                warn!("failed to spawn {}: {}", args.command[0], e);
+                let msg = format!("failed to spawn {}: {}", args.command[0], e);
+                println!("{}", msg);
+                warn!("{}", msg);
                 return;
             }
         }
@@ -141,7 +143,9 @@ fn run(args: RunArgs) {
 
     if let Some(pid) = target_pid {
         if fs::metadata(format!("/proc/{}", pid)).is_err() {
-            warn!("pid {} not found", pid);
+            let msg = format!("pid {} not found", pid);
+            println!("{}", msg);
+            warn!("{}", msg);
             return;
         }
     }
