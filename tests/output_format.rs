@@ -24,11 +24,13 @@ fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     )
     .expect("write cfg");
 
-    let mut child = Command::new("sleep")
-        .arg("2")
+    let mut child = Command::new("python3")
+        .arg("-c")
+        .arg("import sys; sys.stdin.read()")
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()
-        .expect("spawn sleep");
+        .expect("spawn python");
 
     thread::sleep(Duration::from_millis(200));
     let pid = child.id();
@@ -44,6 +46,14 @@ fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         .expect("run fuzmon");
 
     thread::sleep(Duration::from_millis(800));
+    let plain = logdir.path().join(format!("{}.jsonl", pid));
+    let zst = logdir.path().join(format!("{}.jsonl.zst", pid));
+    for _ in 0..80 {
+        if plain.exists() || zst.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
     let _ = mon.kill();
     let _ = mon.wait();
 
@@ -61,11 +71,13 @@ fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
 
 fn run_default() -> (tempfile::TempDir, std::path::PathBuf) {
     let logdir = tempdir().expect("logdir");
-    let mut child = Command::new("sleep")
-        .arg("2")
+    let mut child = Command::new("python3")
+        .arg("-c")
+        .arg("import sys; sys.stdin.read()")
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()
-        .expect("spawn sleep");
+        .expect("spawn python");
 
     thread::sleep(Duration::from_millis(200));
     let pid = child.id();
@@ -80,6 +92,14 @@ fn run_default() -> (tempfile::TempDir, std::path::PathBuf) {
         .expect("run fuzmon");
 
     thread::sleep(Duration::from_millis(800));
+    let plain = logdir.path().join(format!("{}.jsonl", pid));
+    let zst = logdir.path().join(format!("{}.jsonl.zst", pid));
+    for _ in 0..80 {
+        if plain.exists() || zst.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
     let _ = mon.kill();
     let _ = mon.wait();
 

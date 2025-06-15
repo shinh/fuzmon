@@ -13,12 +13,20 @@ fn run_symbol_test(flags: &[&str], expected: &[&str]) {
         r#"
 #include <unistd.h>
 
+__attribute__((noinline))
+static void block_read() {
+    char buf;
+    read(0, &buf, 1);
+}
+
+__attribute__((noinline))
 void target_function() {
     while (1) {
-        sleep(1);
+        block_read();
     }
 }
 
+__attribute__((noinline))
 int main() {
     target_function();
     return 0;
@@ -29,6 +37,8 @@ int main() {
 
     let exe_path = dir.path().join("testprog");
     let mut gcc_args: Vec<&str> = flags.to_vec();
+    gcc_args.push("-fno-optimize-sibling-calls");
+    gcc_args.push("-fno-omit-frame-pointer");
     gcc_args.push(src_path.to_str().unwrap());
     gcc_args.push("-o");
     gcc_args.push(exe_path.to_str().unwrap());
@@ -40,6 +50,7 @@ int main() {
     assert!(status.success());
 
     let mut child = Command::new(&exe_path)
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()
         .expect("spawn test program");
@@ -61,7 +72,7 @@ int main() {
 fn symbolized_stack_trace_contains_function() {
     run_symbol_test(
         &["-g", "-O0"],
-        &["target_function", "main", "sleep", "testprog.c"],
+        &["target_function", "main", "testprog.c"],
     );
 }
 
@@ -70,7 +81,7 @@ fn symbolized_stack_trace_contains_function() {
 fn symbolized_stack_trace_contains_function_no_pie() {
     run_symbol_test(
         &["-g", "-O0", "-no-pie"],
-        &["target_function", "main", "sleep", "testprog.c"],
+        &["target_function", "main", "testprog.c"],
     );
 }
 
@@ -78,7 +89,7 @@ fn symbolized_stack_trace_contains_function_no_pie() {
 fn symbolized_stack_trace_contains_function_no_debug() {
     run_symbol_test(
         &["-O0"],
-        &["target_function", "main", "sleep"],
+        &["target_function", "main"],
     );
 }
 
@@ -86,7 +97,7 @@ fn symbolized_stack_trace_contains_function_no_debug() {
 fn symbolized_stack_trace_contains_function_g1() {
     run_symbol_test(
         &["-g1", "-O0"],
-        &["target_function", "main", "sleep", "testprog.c"],
+        &["target_function", "main", "testprog.c"],
     );
 }
 
@@ -94,6 +105,6 @@ fn symbolized_stack_trace_contains_function_g1() {
 fn symbolized_stack_trace_contains_function_o2() {
     run_symbol_test(
         &["-g", "-O2"],
-        &["target_function", "main", "sleep", "testprog.c"],
+        &["target_function", "main", "testprog.c"],
     );
 }
