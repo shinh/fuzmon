@@ -52,12 +52,6 @@ fn read_proc_stat(pid: u32) -> Option<(u64, u64)> {
     Some((utime, stime))
 }
 
-#[allow(dead_code)]
-pub fn proc_cpu_jiffies(pid: u32) -> Option<u64> {
-    let (u, s) = read_proc_stat(pid)?;
-    Some(u + s)
-}
-
 pub fn read_fd_map(pid: u32) -> HashMap<i32, String> {
     let mut map = HashMap::new();
     if let Ok(entries) = fs::read_dir(format!("/proc/{}/fd", pid)) {
