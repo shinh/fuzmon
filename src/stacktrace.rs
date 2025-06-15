@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fs;
 use addr2line::Loader;
 use object::{Object, ObjectKind};
@@ -13,38 +14,63 @@ pub struct ExeInfo {
     pub offset: u64,
 }
 
-fn find_exe_info(pid: i32) -> Option<ExeInfo> {
-    let exe = fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
-    let maps = fs::read_to_string(format!("/proc/{}/maps", pid)).ok()?;
+pub struct Module {
+    pub loader: Loader,
+    pub info: ExeInfo,
+    pub is_pie: bool,
+}
+
+
+pub fn load_loaders(pid: i32) -> Vec<Module> {
+    let maps = match fs::read_to_string(format!("/proc/{}/maps", pid)) {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+    let mut infos: HashMap<String, ExeInfo> = HashMap::new();
     for line in maps.lines() {
-        if line.contains(exe.to_str()?) {
-            let mut parts = line.split_whitespace();
-            if let (Some(range), Some(perms), Some(offset)) = (parts.next(), parts.next(), parts.next()) {
-                if perms.starts_with('r') && perms.contains('x') {
-                    if let Some((start, end)) = range.split_once('-') {
-                        if let (Ok(start_addr), Ok(end_addr), Ok(off)) = (
-                            u64::from_str_radix(start, 16),
-                            u64::from_str_radix(end, 16),
-                            u64::from_str_radix(offset, 16),
-                        ) {
-                            return Some(ExeInfo { start: start_addr, end: end_addr, offset: off });
-                        }
-                    }
+        let mut parts = line.split_whitespace();
+        let range = match parts.next() { Some(v) => v, None => continue };
+        let perms = match parts.next() { Some(v) => v, None => continue };
+        let offset = match parts.next() { Some(v) => v, None => continue };
+        let _dev = parts.next();
+        let _inode = parts.next();
+        let path = match parts.next() { Some(v) => v, None => continue };
+        if !perms.contains('x') || path.starts_with('[') {
+            continue;
+        }
+        if let Some((start, end)) = range.split_once('-') {
+            if let (Ok(start_addr), Ok(end_addr), Ok(off)) = (
+                u64::from_str_radix(start, 16),
+                u64::from_str_radix(end, 16),
+                u64::from_str_radix(offset, 16),
+            ) {
+                let entry = infos.entry(path.to_string()).or_insert(ExeInfo {
+                    start: start_addr,
+                    end: end_addr,
+                    offset: off,
+                });
+                if start_addr < entry.start {
+                    entry.start = start_addr;
+                    entry.offset = off;
+                }
+                if end_addr > entry.end {
+                    entry.end = end_addr;
                 }
             }
         }
     }
-    None
-}
-
-pub fn load_loader(pid: i32) -> Option<(Loader, ExeInfo, bool)> {
-    let exe_path = fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
-    let loader = Loader::new(&exe_path).ok()?;
-    let info = find_exe_info(pid)?;
-    let data = fs::read(&exe_path).ok()?;
-    let obj = object::File::parse(&*data).ok()?;
-    let is_pie = matches!(obj.kind(), ObjectKind::Dynamic);
-    Some((loader, info, is_pie))
+    let mut modules = Vec::new();
+    for (path, info) in infos {
+        if let Ok(loader) = Loader::new(&path) {
+            if let Ok(data) = fs::read(&path) {
+                if let Ok(obj) = object::File::parse(&*data) {
+                    let is_pie = matches!(obj.kind(), ObjectKind::Dynamic);
+                    modules.push(Module { loader, info, is_pie });
+                }
+            }
+        }
+    }
+    modules
 }
 
 fn describe_addr(loader: &Loader, info: &ExeInfo, addr: u64, is_pie: bool) -> Option<String> {
@@ -118,18 +144,16 @@ pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
 
     let res = (|| {
         let stack = get_stack_trace(target, 32)?;
-        let loader = load_loader(pid);
+        let modules = load_loaders(pid);
         let mut lines = Vec::new();
         for (i, addr) in stack.iter().enumerate() {
-            let line = if let Some((ref l, ref exe, pie)) = loader {
-                if let Some(info) = describe_addr(l, exe, *addr, pie) {
-                    format!("{:>2}: {:#x} {}", i, addr, info)
-                } else {
-                    format!("{:>2}: {:#x}", i, addr)
+            let mut line = format!("{:>2}: {:#x}", i, addr);
+            for m in &modules {
+                if let Some(info) = describe_addr(&m.loader, &m.info, *addr, m.is_pie) {
+                    line = format!("{:>2}: {:#x} {}", i, addr, info);
+                    break;
                 }
-            } else {
-                format!("{:>2}: {:#x}", i, addr)
-            };
+            }
             lines.push(line);
         }
         Ok(lines)
