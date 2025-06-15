@@ -1,8 +1,8 @@
+use log::warn;
+use nix::libc;
+use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use std::collections::HashMap;
-use nix::libc;
-use log::warn;
 
 #[derive(Default)]
 pub struct ProcState {
@@ -52,6 +52,7 @@ fn read_proc_stat(pid: u32) -> Option<(u64, u64)> {
     Some((utime, stime))
 }
 
+#[allow(dead_code)]
 pub fn proc_cpu_jiffies(pid: u32) -> Option<u64> {
     let (u, s) = read_proc_stat(pid)?;
     Some(u + s)
@@ -177,7 +178,7 @@ fn read_total_cpu_time() -> Option<u64> {
     Some(total)
 }
 
-fn read_rss_kb(pid: u32) -> Option<u64> {
+pub fn rss_kb(pid: u32) -> Option<u64> {
     let status = match fs::read_to_string(format!("/proc/{}/status", pid)) {
         Ok(s) => s,
         Err(e) => {
@@ -213,7 +214,7 @@ pub fn get_proc_usage(pid: u32, state: &mut ProcState) -> Option<(f32, u64)> {
         return None;
     }
     let cpu = 100.0 * delta_proc as f32 / delta_total as f32;
-    let rss = read_rss_kb(pid).unwrap_or(0);
+    let rss = rss_kb(pid).unwrap_or(0);
     Some((cpu, rss))
 }
 

@@ -10,4 +10,4 @@ compress = true
 
 [monitor]
 interval_sec = 60
-cpu_time_jiffies_threshold = 1
+cpu_time_percent_threshold = 1.0

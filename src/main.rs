@@ -9,9 +9,12 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 use std::{
     collections::{HashMap, HashSet},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::sleep,
     time::Duration,
-    sync::{atomic::{AtomicBool, Ordering}, Arc},
 };
 
 mod config;
@@ -20,8 +23,8 @@ mod stacktrace;
 
 use crate::config::{Cli, Commands, RunArgs, load_config, merge_config, parse_cli, uid_from_name};
 use crate::procinfo::{
-    ProcState, detect_fd_events, get_proc_usage, pid_uid, proc_cpu_jiffies, proc_cpu_time_sec,
-    process_name, read_pids, should_suppress, swap_kb, vsz_kb,
+    ProcState, detect_fd_events, get_proc_usage, pid_uid, proc_cpu_time_sec, process_name,
+    read_pids, rss_kb, should_suppress, swap_kb, vsz_kb,
 };
 use crate::stacktrace::{capture_c_stack_traces, capture_python_stack_traces};
 use clap::CommandFactory;
@@ -124,10 +127,7 @@ fn run(args: RunArgs) {
         Duration::from_secs(interval)
     };
 
-    let cpu_jiffies_threshold = config
-        .monitor
-        .cpu_time_jiffies_threshold
-        .unwrap_or(1);
+    let cpu_percent_threshold = config.monitor.cpu_time_percent_threshold.unwrap_or(1.0);
 
     let term = Arc::new(AtomicBool::new(false));
     {
@@ -146,7 +146,7 @@ fn run(args: RunArgs) {
             target_pid,
             target_uid,
             &ignore_patterns,
-            cpu_jiffies_threshold,
+            cpu_percent_threshold,
             output_dir,
             use_msgpack,
             compress,
@@ -175,7 +175,7 @@ fn monitor_iteration(
     target_pid: Option<u32>,
     target_uid: Option<u32>,
     ignore_patterns: &[Regex],
-    cpu_jiffies_threshold: u64,
+    cpu_percent_threshold: f64,
     output_dir: Option<&str>,
     use_msgpack: bool,
     compress: bool,
@@ -203,17 +203,28 @@ fn monitor_iteration(
         }
     }
     for pid in &pids {
-        if should_skip_pid(*pid, target_pid, ignore_patterns, cpu_jiffies_threshold) {
-            continue;
-        }
         let is_new = !states.contains_key(pid);
         let state = states.entry(*pid).or_default();
+        let usage = get_proc_usage(*pid, state);
+        let cpu = usage.map(|u| u.0).unwrap_or(0.0);
+        if should_skip_pid(
+            *pid,
+            target_pid,
+            ignore_patterns,
+            cpu_percent_threshold,
+            cpu,
+        ) {
+            continue;
+        }
         if is_new {
             info!("new process {}", pid);
         }
         let raw_events = detect_fd_events(*pid, state);
         state.pending_fd_events.extend(raw_events);
-        if let Some((cpu, rss)) = get_proc_usage(*pid, state) {
+        let rss = usage
+            .map(|u| u.1)
+            .unwrap_or_else(|| rss_kb(*pid).unwrap_or(0));
+        {
             let fd_log_events: Vec<FdLogEvent> = state
                 .pending_fd_events
                 .drain(..)
@@ -257,7 +268,8 @@ fn should_skip_pid(
     pid: u32,
     target_pid: Option<u32>,
     ignore_patterns: &[Regex],
-    cpu_jiffies_threshold: u64,
+    cpu_percent_threshold: f64,
+    cpu_percent: f32,
 ) -> bool {
     if target_pid.is_none() {
         if let Some(name) = process_name(pid) {
@@ -265,7 +277,7 @@ fn should_skip_pid(
                 return true;
             }
         }
-        if proc_cpu_jiffies(pid).unwrap_or(0) < cpu_jiffies_threshold {
+        if cpu_percent < cpu_percent_threshold as f32 {
             return true;
         }
     }
@@ -306,10 +318,18 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
         };
         for (tid, c) in c_traces.drain(..) {
             let py = py_traces.remove(&(tid as u32));
-            entry.threads.push(ThreadInfo { tid: tid as u32, stacktrace: c, python_stacktrace: py });
+            entry.threads.push(ThreadInfo {
+                tid: tid as u32,
+                stacktrace: c,
+                python_stacktrace: py,
+            });
         }
         for (tid, py) in py_traces.into_iter() {
-            entry.threads.push(ThreadInfo { tid, stacktrace: None, python_stacktrace: Some(py) });
+            entry.threads.push(ThreadInfo {
+                tid,
+                stacktrace: None,
+                python_stacktrace: Some(py),
+            });
         }
     }
     entry
@@ -318,7 +338,11 @@ fn build_log_entry(pid: u32, cpu: f32, rss: u64, fd_events: Vec<FdLogEvent>) -> 
 fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
     let ext = if use_msgpack { "msgpacks" } else { "jsonl" };
     let base = format!("{}/{}.{}", dir.trim_end_matches('/'), entry.pid, ext);
-    let path = if compress { format!("{}.zst", base) } else { base };
+    let path = if compress {
+        format!("{}.zst", base)
+    } else {
+        base
+    };
     match OpenOptions::new().create(true).append(true).open(&path) {
         Ok(file) => {
             if compress {
@@ -361,7 +385,6 @@ fn write_log(dir: &str, entry: &LogEntry, use_msgpack: bool, compress: bool) {
         Err(e) => warn!("open {} failed: {}", path, e),
     }
 }
-
 
 fn read_log_entries(path: &Path) -> io::Result<Vec<LogEntry>> {
     let file = fs::File::open(path)?;

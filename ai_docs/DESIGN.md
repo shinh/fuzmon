@@ -14,7 +14,7 @@
   - Include rules (e.g., user, memory usage)
   - **Automatically skip ptrace for "inactive" processes** based on:
     - CPU usage time (read from `/proc/<pid>/stat`)
-    - Threshold: e.g., total CPU time in jiffies < N
+    - Threshold: e.g., CPU usage percentage < N
 
 
 ### Stack Trace Collection
