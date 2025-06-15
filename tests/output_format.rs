@@ -3,6 +3,7 @@ use std::process::{Command, Stdio};
 use tempfile::{NamedTempFile, tempdir};
 
 use fuzmon::test_utils::wait_until_file_appears;
+use fuzmon::utils::current_date_string;
 
 fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let logdir = tempdir().expect("logdir");
@@ -54,7 +55,9 @@ fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     }
     let _ = child.wait();
 
-    let path = fs::read_dir(logdir.path())
+    let date = current_date_string();
+    let subdir = logdir.path().join(date);
+    let path = fs::read_dir(&subdir)
         .unwrap()
         .next()
         .unwrap()
@@ -95,7 +98,9 @@ fn run_default() -> (tempfile::TempDir, std::path::PathBuf) {
     }
     let _ = child.wait();
 
-    let path = fs::read_dir(logdir.path())
+    let date = current_date_string();
+    let subdir = logdir.path().join(date);
+    let path = fs::read_dir(&subdir)
         .unwrap()
         .next()
         .unwrap()

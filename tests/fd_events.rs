@@ -1,4 +1,5 @@
 use fuzmon::test_utils::wait_until_file_appears;
+use fuzmon::utils::current_date_string;
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -47,8 +48,10 @@ sys.stdin.readline()
         .spawn()
         .expect("run fuzmon");
 
-    let plain = logdir.path().join(format!("{}.jsonl", pid));
-    let zst = logdir.path().join(format!("{}.jsonl.zst", pid));
+    let date = current_date_string();
+    let base_dir = logdir.path().join(&date);
+    let plain = base_dir.join(format!("{}.jsonl", pid));
+    let zst = base_dir.join(format!("{}.jsonl.zst", pid));
     wait_until_file_appears(&logdir, pid);
 
     child_in.write_all(b"\n").unwrap();

@@ -12,6 +12,9 @@ fuzmon -p 1234 -o logs/
 # logs default to /tmp/fuzmon when -o not specified
 ```
 
+Log files are written under a date directory such as `logs/20250615/`. A new
+directory is created if the date changes while running.
+
 Each line in the log file is a JSON object similar to:
 
 ```json
