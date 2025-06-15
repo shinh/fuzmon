@@ -2,6 +2,7 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::collections::HashMap;
 use nix::libc;
+use log::warn;
 
 #[derive(Default)]
 pub struct ProcState {
@@ -12,7 +13,13 @@ pub struct ProcState {
 }
 
 pub fn pid_uid(pid: u32) -> Option<u32> {
-    fs::metadata(format!("/proc/{}", pid)).ok().map(|m| m.uid())
+    match fs::metadata(format!("/proc/{}", pid)) {
+        Ok(m) => Some(m.uid()),
+        Err(e) => {
+            warn!("metadata for {} failed: {}", pid, e);
+            None
+        }
+    }
 }
 
 pub fn read_pids() -> Vec<u32> {
@@ -25,12 +32,20 @@ pub fn read_pids() -> Vec<u32> {
                 }
             }
         }
+    } else {
+        warn!("read_dir /proc failed");
     }
     pids
 }
 
 fn read_proc_stat(pid: u32) -> Option<(u64, u64)> {
-    let data = fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?;
+    let data = match fs::read_to_string(format!("/proc/{}/stat", pid)) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("read stat {} failed: {}", pid, e);
+            return None;
+        }
+    };
     let parts: Vec<&str> = data.split_whitespace().collect();
     let utime = parts.get(13)?.parse::<u64>().ok()?; // field 14
     let stime = parts.get(14)?.parse::<u64>().ok()?; // field 15
@@ -48,14 +63,19 @@ pub fn read_fd_map(pid: u32) -> HashMap<i32, String> {
         for entry in entries.flatten() {
             if let Ok(name) = entry.file_name().into_string() {
                 if let Ok(fd) = name.parse::<i32>() {
-                    if let Ok(target) = fs::read_link(entry.path()) {
-                        if let Some(path) = target.to_str() {
-                            map.insert(fd, path.to_string());
+                    match fs::read_link(entry.path()) {
+                        Ok(target) => {
+                            if let Some(path) = target.to_str() {
+                                map.insert(fd, path.to_string());
+                            }
                         }
+                        Err(e) => warn!("read_link for {} fd {} failed: {}", pid, fd, e),
                     }
                 }
             }
         }
+    } else {
+        warn!("read_dir fd for {} failed", pid);
     }
     map
 }
@@ -99,7 +119,13 @@ pub fn detect_fd_events(pid: u32, state: &mut ProcState) -> Vec<FdEvent> {
 }
 
 fn read_status_value(pid: u32, key: &str) -> Option<u64> {
-    let status = fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
+    let status = match fs::read_to_string(format!("/proc/{}/status", pid)) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("read status {} failed: {}", pid, e);
+            return None;
+        }
+    };
     for line in status.lines() {
         if line.starts_with(key) {
             let parts: Vec<&str> = line.split_whitespace().collect();
@@ -136,7 +162,13 @@ pub fn proc_cpu_time_sec(pid: u32) -> Option<f64> {
 }
 
 fn read_total_cpu_time() -> Option<u64> {
-    let data = fs::read_to_string("/proc/stat").ok()?;
+    let data = match fs::read_to_string("/proc/stat") {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("read /proc/stat failed: {}", e);
+            return None;
+        }
+    };
     let line = data.lines().next()?;
     let mut total = 0u64;
     for v in line.split_whitespace().skip(1) {
@@ -146,7 +178,13 @@ fn read_total_cpu_time() -> Option<u64> {
 }
 
 fn read_rss_kb(pid: u32) -> Option<u64> {
-    let status = fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
+    let status = match fs::read_to_string(format!("/proc/{}/status", pid)) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("read rss {} failed: {}", pid, e);
+            return None;
+        }
+    };
     for line in status.lines() {
         if line.starts_with("VmRSS:") {
             let parts: Vec<&str> = line.split_whitespace().collect();

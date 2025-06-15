@@ -529,6 +529,8 @@ dependencies = [
  "addr2line 0.25.0",
  "chrono",
  "clap 4.5.40",
+ "env_logger 0.10.2",
+ "log",
  "memmap2",
  "nix 0.28.0",
  "object 0.37.1",

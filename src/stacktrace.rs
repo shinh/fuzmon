@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
+use log::warn;
 use addr2line::Loader;
 use object::{Object, ObjectKind};
 use nix::sys::{ptrace, wait::waitpid};
@@ -24,7 +25,10 @@ pub struct Module {
 pub fn load_loaders(pid: i32) -> Vec<Module> {
     let maps = match fs::read_to_string(format!("/proc/{}/maps", pid)) {
         Ok(m) => m,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            warn!("read maps {} failed: {}", pid, e);
+            return Vec::new();
+        }
     };
     let mut infos: HashMap<String, ExeInfo> = HashMap::new();
     for line in maps.lines() {
@@ -58,13 +62,20 @@ pub fn load_loaders(pid: i32) -> Vec<Module> {
     }
     let mut modules = Vec::new();
     for (path, info) in infos {
-        if let Ok(loader) = Loader::new(&path) {
-            if let Ok(data) = fs::read(&path) {
-                if let Ok(obj) = object::File::parse(&*data) {
-                    let is_pic = matches!(obj.kind(), ObjectKind::Dynamic);
-                    modules.push(Module { loader, info, is_pic });
+        match Loader::new(&path) {
+            Ok(loader) => {
+                match fs::read(&path) {
+                    Ok(data) => match object::File::parse(&*data) {
+                        Ok(obj) => {
+                            let is_pic = matches!(obj.kind(), ObjectKind::Dynamic);
+                            modules.push(Module { loader, info, is_pic });
+                        }
+                        Err(e) => warn!("parse {} failed: {}", path, e),
+                    },
+                    Err(e) => warn!("read {} failed: {}", path, e),
                 }
             }
+            Err(e) => warn!("Loader::new {} failed: {}", path, e),
         }
     }
     modules
@@ -156,7 +167,9 @@ pub fn capture_stack_trace(pid: i32) -> nix::Result<Vec<String>> {
         Ok(lines)
     })();
 
-    let _ = ptrace::detach(target, None);
+    if let Err(e) = ptrace::detach(target, None) {
+        warn!("detach failed: {}", e);
+    }
     res
 }
 
