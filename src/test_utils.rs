@@ -1,6 +1,6 @@
 use crate::utils::current_date_string;
 use std::fs;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::{thread, time::Duration};
 use tempfile::{NamedTempFile, TempDir};
 use zstd::stream;
@@ -38,6 +38,13 @@ pub fn wait_until_file_appears(logdir: &TempDir, pid: u32) {
     }
 }
 
+pub fn kill_with_sigint_and_wait(child: &mut Child) {
+    unsafe {
+        let _ = nix::libc::kill(child.id() as i32, nix::libc::SIGINT);
+    }
+    let _ = child.wait();
+}
+
 pub fn create_config(threshold: f64) -> NamedTempFile {
     let cfg_file = NamedTempFile::new().expect("cfg");
     fs::write(
@@ -60,10 +67,7 @@ pub fn run_fuzmon(bin: &str, pid: u32, log_dir: &TempDir) -> String {
         .expect("run fuzmon");
 
     wait_until_file_appears(log_dir, pid);
-    unsafe {
-        let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
-    }
-    let _ = mon.wait();
+    kill_with_sigint_and_wait(&mut mon);
 
     collect_log_content(log_dir)
 }

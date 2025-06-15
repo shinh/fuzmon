@@ -14,10 +14,7 @@ fn first_entry_contains_cmdline_and_env() {
         .expect("spawn sleep");
     let pid = child.id();
     let log = run_fuzmon(env!("CARGO_BIN_EXE_fuzmon"), pid, &logdir);
-    unsafe {
-        let _ = nix::libc::kill(child.id() as i32, nix::libc::SIGINT);
-    }
-    let _ = child.wait();
+    fuzmon::test_utils::kill_with_sigint_and_wait(&mut child);
     let first = log.lines().next().expect("line");
     let v: Value = serde_json::from_str(first).expect("json");
     assert_eq!(v.get("cmdline").and_then(|s| s.as_str()), Some("sleep 1"));

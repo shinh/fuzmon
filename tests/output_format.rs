@@ -45,15 +45,9 @@ fn run_with_format(fmt: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         .expect("run fuzmon");
 
     wait_until_file_appears(&logdir, pid);
-    unsafe {
-        let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
-    }
-    let _ = mon.wait();
+    fuzmon::test_utils::kill_with_sigint_and_wait(&mut mon);
 
-    unsafe {
-        let _ = nix::libc::kill(child.id() as i32, nix::libc::SIGINT);
-    }
-    let _ = child.wait();
+    fuzmon::test_utils::kill_with_sigint_and_wait(&mut child);
 
     let date = current_date_string();
     let subdir = logdir.path().join(date);
@@ -88,15 +82,9 @@ fn run_default() -> (tempfile::TempDir, std::path::PathBuf) {
         .expect("run fuzmon");
 
     wait_until_file_appears(&logdir, pid);
-    unsafe {
-        let _ = nix::libc::kill(mon.id() as i32, nix::libc::SIGINT);
-    }
-    let _ = mon.wait();
+    fuzmon::test_utils::kill_with_sigint_and_wait(&mut mon);
 
-    unsafe {
-        let _ = nix::libc::kill(child.id() as i32, nix::libc::SIGINT);
-    }
-    let _ = child.wait();
+    fuzmon::test_utils::kill_with_sigint_and_wait(&mut child);
 
     let date = current_date_string();
     let subdir = logdir.path().join(date);
