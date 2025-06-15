@@ -176,6 +176,12 @@ fn run(args: RunArgs) {
 
     let mut states: HashMap<u32, ProcState> = HashMap::new();
     loop {
+        if let Some(pid) = target_pid {
+            if !procinfo::proc_exists(pid) {
+                println!("終了します");
+                break;
+            }
+        }
         monitor_iteration(
             &mut states,
             target_pid,

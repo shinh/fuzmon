@@ -28,6 +28,19 @@ pub fn pid_uid(pid: u32) -> Option<u32> {
     }
 }
 
+pub fn proc_exists(pid: u32) -> bool {
+    match fs::read_to_string(format!("/proc/{}/stat", pid)) {
+        Ok(data) => {
+            let parts: Vec<&str> = data.split_whitespace().collect();
+            if let Some(state) = parts.get(2) {
+                return *state != "Z";
+            }
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 pub fn read_pids() -> Vec<u32> {
     let mut pids = Vec::new();
     if let Ok(entries) = fs::read_dir("/proc") {
