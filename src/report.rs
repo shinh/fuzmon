@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local};
 use html_escape::encode_text;
 use log::warn;
 use plotters::prelude::*;
@@ -16,8 +16,8 @@ struct Stats {
     pid: u32,
     cmd: String,
     env: Option<String>,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
+    start: DateTime<Local>,
+    end: DateTime<Local>,
     runtime: i64,
     cpu: f64,
     avg_cpu: f64,
@@ -36,10 +36,10 @@ fn calc_stats(path: &Path, entries: &[LogEntry]) -> Option<Stats> {
     let cmd = first.cmdline.clone().unwrap_or_else(|| "(unknown)".into());
     let env = first.env.clone();
     let start = chrono::DateTime::parse_from_rfc3339(&first.timestamp)
-        .map(|t| t.with_timezone(&Utc))
+        .map(|t| t.with_timezone(&Local))
         .unwrap();
     let end = chrono::DateTime::parse_from_rfc3339(&sorted.last().unwrap().timestamp)
-        .map(|t| t.with_timezone(&Utc))
+        .map(|t| t.with_timezone(&Local))
         .unwrap();
     let runtime = (end - start).num_seconds();
     let mut cpu = 0.0f64;
@@ -47,10 +47,10 @@ fn calc_stats(path: &Path, entries: &[LogEntry]) -> Option<Stats> {
     for win in sorted.windows(2) {
         if let [a, b] = win {
             let ta = chrono::DateTime::parse_from_rfc3339(&a.timestamp)
-                .map(|t| t.with_timezone(&Utc))
+                .map(|t| t.with_timezone(&Local))
                 .unwrap();
             let tb = chrono::DateTime::parse_from_rfc3339(&b.timestamp)
-                .map(|t| t.with_timezone(&Utc))
+                .map(|t| t.with_timezone(&Local))
                 .unwrap();
             let dt = (tb - ta).num_seconds() as f64;
             cpu += a.cpu_time_percent * dt / 100.0;
@@ -104,17 +104,17 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
     let mut sorted: Vec<&LogEntry> = entries.iter().collect();
     sorted.sort_by_key(|e| e.timestamp.clone());
     let start = chrono::DateTime::parse_from_rfc3339(&sorted[0].timestamp)
-        .map(|t| t.with_timezone(&Utc))
+        .map(|t| t.with_timezone(&Local))
         .unwrap();
     let end = chrono::DateTime::parse_from_rfc3339(&sorted.last().unwrap().timestamp)
-        .map(|t| t.with_timezone(&Utc))
+        .map(|t| t.with_timezone(&Local))
         .unwrap();
 
     let mut max_val = 0.0f64;
     let mut series = Vec::new();
     for e in &sorted {
         let t = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
-            .map(|tt| tt.with_timezone(&Utc))
+            .map(|tt| tt.with_timezone(&Local))
             .unwrap();
         let v = match field {
             GraphField::Cpu => e.cpu_time_percent,
@@ -150,7 +150,7 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     chart
         .configure_mesh()
-        .x_desc("time (UTC)")
+        .x_desc("time")
         .y_desc(y_desc)
         .x_labels(5)
         .y_labels(5)
@@ -170,23 +170,27 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
 fn collect_series(
     entries: &[LogEntry],
     field: GraphField,
-) -> (Vec<(DateTime<Utc>, f64)>, DateTime<Utc>, DateTime<Utc>) {
+) -> (
+    Vec<(DateTime<Local>, f64)>,
+    DateTime<Local>,
+    DateTime<Local>,
+) {
     if entries.is_empty() {
-        let now = Utc::now();
+        let now = Local::now();
         return (Vec::new(), now, now);
     }
     let mut sorted: Vec<&LogEntry> = entries.iter().collect();
     sorted.sort_by_key(|e| e.timestamp.clone());
     let start = chrono::DateTime::parse_from_rfc3339(&sorted[0].timestamp)
-        .map(|t| t.with_timezone(&Utc))
+        .map(|t| t.with_timezone(&Local))
         .unwrap();
     let end = chrono::DateTime::parse_from_rfc3339(&sorted.last().unwrap().timestamp)
-        .map(|t| t.with_timezone(&Utc))
+        .map(|t| t.with_timezone(&Local))
         .unwrap();
     let mut series = Vec::new();
     for e in &sorted {
         let t = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
-            .map(|tt| tt.with_timezone(&Utc))
+            .map(|tt| tt.with_timezone(&Local))
             .unwrap();
         let v = match field {
             GraphField::Cpu => e.cpu_time_percent,
@@ -199,8 +203,8 @@ fn collect_series(
 
 fn write_multi_svg(stats: &[Stats], out: &Path, field: GraphField) {
     let mut data = Vec::new();
-    let mut start_all: Option<DateTime<Utc>> = None;
-    let mut end_all: Option<DateTime<Utc>> = None;
+    let mut start_all: Option<DateTime<Local>> = None;
+    let mut end_all: Option<DateTime<Local>> = None;
     let mut max_val = 0.0f64;
     for s in stats {
         if let Ok(entries) = read_log_entries(Path::new(&s.path)) {
@@ -260,7 +264,7 @@ fn write_multi_svg(stats: &[Stats], out: &Path, field: GraphField) {
     };
     if chart
         .configure_mesh()
-        .x_desc("time (UTC)")
+        .x_desc("time")
         .y_desc(y_desc)
         .x_labels(5)
         .y_labels(5)
@@ -380,7 +384,7 @@ fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
             continue;
         }
         let dt = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
-            .map(|t| t.with_timezone(&Utc))
+            .map(|t| t.with_timezone(&Local))
             .map_err(|er| io::Error::new(io::ErrorKind::InvalidData, er))?;
         let ts = dt.timestamp_micros();
 
@@ -510,7 +514,7 @@ fn render_index(stats: &[Stats], link: bool) -> String {
     }
     out.push_str("<table>\n");
     out.push_str(
-        "<tr><th>PID</th><th>Command</th><th>Total runtime</th><th>Total CPU time</th><th>Avg CPU (%)</th><th>Peak RSS</th></tr>\n",
+        "<tr><th>PID</th><th>Command</th><th>Total runtime</th><th>Total CPU time</th><th>Avg CPU (%)</th><th>Peak RSS</th><th>Start</th><th>End</th></tr>\n",
     );
     for s in stats {
         let pid_cell = if link {
@@ -525,8 +529,15 @@ fn render_index(stats: &[Stats], link: bool) -> String {
             encode_text(&s.cmd)
         );
         out.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{:.1}</td><td>{}</td></tr>\n",
-            pid_cell, cmd_cell, s.runtime, s.cpu, s.avg_cpu, s.peak_rss
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{:.1}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            pid_cell,
+            cmd_cell,
+            s.runtime,
+            s.cpu,
+            s.avg_cpu,
+            s.peak_rss,
+            s.start,
+            s.end
         ));
     }
     out.push_str("</table></body></html>\n");
