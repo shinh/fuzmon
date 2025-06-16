@@ -91,6 +91,8 @@ fn html_report_directory() {
         stdout
     );
     let html = fs::read_to_string(outdir.path().join("index.html")).unwrap();
+    assert!(html.contains("Start:"), "{}", html);
+    assert!(html.contains("End:"), "{}", html);
     let pos1 = html.find("1111").expect("1111");
     let pos2 = html.find("2222").expect("2222");
     assert!(pos1 < pos2, "order: {}", html);

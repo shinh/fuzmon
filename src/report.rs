@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use html_escape::encode_text;
 use log::warn;
 use plotters::prelude::*;
@@ -16,6 +16,8 @@ struct Stats {
     pid: u32,
     cmd: String,
     env: Option<String>,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
     runtime: i64,
     cpu: f64,
     avg_cpu: f64,
@@ -66,6 +68,8 @@ fn calc_stats(path: &Path, entries: &[LogEntry]) -> Option<Stats> {
         pid,
         cmd,
         env,
+        start,
+        end,
         runtime,
         cpu,
         avg_cpu,
@@ -106,20 +110,18 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
         .map(|t| t.with_timezone(&Utc))
         .unwrap();
 
-    let x_max = (end - start).num_seconds().max(1) as f64;
     let mut max_val = 0.0f64;
     let mut series = Vec::new();
     for e in &sorted {
         let t = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
             .map(|tt| tt.with_timezone(&Utc))
             .unwrap();
-        let x = (t - start).num_seconds() as f64;
         let v = match field {
             GraphField::Cpu => e.cpu_time_percent,
             GraphField::Rss => e.memory.rss_kb as f64,
         };
         max_val = max_val.max(v);
-        series.push((x, v));
+        series.push((t, v));
     }
     if max_val <= 0.0 {
         max_val = 1.0;
@@ -142,14 +144,17 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
     let mut chart = ChartBuilder::on(&root)
         .caption(caption, ("sans-serif", 20))
         .margin(5)
-        .x_label_area_size(30)
+        .x_label_area_size(40)
         .y_label_area_size(40)
-        .build_cartesian_2d(0f64..x_max, 0f64..y_max)
+        .build_cartesian_2d(start..end, 0f64..y_max)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     chart
         .configure_mesh()
-        .x_desc("time (s)")
+        .x_desc("time (UTC)")
         .y_desc(y_desc)
+        .x_labels(5)
+        .y_labels(5)
+        .x_label_formatter(&|dt| dt.format("%H:%M:%S").to_string())
         .draw()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     chart
@@ -162,9 +167,13 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
 }
 
-fn collect_series(entries: &[LogEntry], field: GraphField) -> (Vec<(f64, f64)>, f64) {
+fn collect_series(
+    entries: &[LogEntry],
+    field: GraphField,
+) -> (Vec<(DateTime<Utc>, f64)>, DateTime<Utc>, DateTime<Utc>) {
     if entries.is_empty() {
-        return (Vec::new(), 0.0);
+        let now = Utc::now();
+        return (Vec::new(), now, now);
     }
     let mut sorted: Vec<&LogEntry> = entries.iter().collect();
     sorted.sort_by_key(|e| e.timestamp.clone());
@@ -179,28 +188,28 @@ fn collect_series(entries: &[LogEntry], field: GraphField) -> (Vec<(f64, f64)>, 
         let t = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
             .map(|tt| tt.with_timezone(&Utc))
             .unwrap();
-        let x = (t - start).num_seconds() as f64;
         let v = match field {
             GraphField::Cpu => e.cpu_time_percent,
             GraphField::Rss => e.memory.rss_kb as f64,
         };
-        series.push((x, v));
+        series.push((t, v));
     }
-    let runtime = (end - start).num_seconds().max(1) as f64;
-    (series, runtime)
+    (series, start, end)
 }
 
 fn write_multi_svg(stats: &[Stats], out: &Path, field: GraphField) {
     let mut data = Vec::new();
-    let mut x_max = 0.0f64;
+    let mut start_all: Option<DateTime<Utc>> = None;
+    let mut end_all: Option<DateTime<Utc>> = None;
     let mut max_val = 0.0f64;
     for s in stats {
         if let Ok(entries) = read_log_entries(Path::new(&s.path)) {
-            let (series, runtime) = collect_series(&entries, field);
+            let (series, start, end) = collect_series(&entries, field);
             if series.is_empty() {
                 continue;
             }
-            x_max = x_max.max(runtime);
+            start_all = Some(start_all.map_or(start, |cur| cur.min(start)));
+            end_all = Some(end_all.map_or(end, |cur| cur.max(end)));
             for &(_, v) in &series {
                 max_val = max_val.max(v);
             }
@@ -219,6 +228,11 @@ fn write_multi_svg(stats: &[Stats], out: &Path, field: GraphField) {
     if max_val <= 0.0 {
         max_val = 1.0;
     }
+    let start = match start_all {
+        Some(s) => s,
+        None => return,
+    };
+    let end = end_all.unwrap_or(start + chrono::Duration::seconds(1));
     let root = SVGBackend::new(out, (600, 300)).into_drawing_area();
     if root.fill(&WHITE).is_err() {
         return;
@@ -237,17 +251,20 @@ fn write_multi_svg(stats: &[Stats], out: &Path, field: GraphField) {
     let mut chart = match ChartBuilder::on(&root)
         .caption(caption, ("sans-serif", 20))
         .margin(5)
-        .x_label_area_size(30)
+        .x_label_area_size(40)
         .y_label_area_size(40)
-        .build_cartesian_2d(0f64..x_max, 0f64..y_max)
+        .build_cartesian_2d(start..end, 0f64..y_max)
     {
         Ok(c) => c,
         Err(_) => return,
     };
     if chart
         .configure_mesh()
-        .x_desc("time (s)")
+        .x_desc("time (UTC)")
         .y_desc(y_desc)
+        .x_labels(5)
+        .y_labels(5)
+        .x_label_formatter(&|dt| dt.format("%H:%M:%S").to_string())
         .draw()
         .is_err()
     {
@@ -484,6 +501,13 @@ fn render_index(stats: &[Stats], link: bool) -> String {
     out.push_str("<html><head><style>table,th,td{border:1px solid black;border-collapse:collapse;}pre{margin:0;}</style></head><body>\n");
     out.push_str("<p>CPU usage<br><img src=\"top_cpu.svg\" alt=\"Top CPU usage graph\" /></p>\n");
     out.push_str("<p>Peak RSS<br><img src=\"top_rss.svg\" alt=\"Top RSS graph\" /></p>\n");
+    if let (Some(start), Some(end)) = (
+        stats.iter().map(|s| s.start).min(),
+        stats.iter().map(|s| s.end).max(),
+    ) {
+        out.push_str(&format!("<p>Start: {}</p>\n", start));
+        out.push_str(&format!("<p>End: {}</p>\n", end));
+    }
     out.push_str("<table>\n");
     out.push_str(
         "<tr><th>PID</th><th>Command</th><th>Total runtime</th><th>Total CPU time</th><th>Avg CPU (%)</th><th>Peak RSS</th></tr>\n",
