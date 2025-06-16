@@ -100,6 +100,10 @@ fn html_report_directory() {
     assert!(outdir.path().join("1111_rss.svg").exists());
     assert!(outdir.path().join("2222_cpu.svg").exists());
     assert!(outdir.path().join("2222_rss.svg").exists());
+    assert!(outdir.path().join("top_cpu.svg").exists());
+    assert!(outdir.path().join("top_rss.svg").exists());
+    assert!(html.contains("top_cpu.svg"), "{}", html);
+    assert!(html.contains("top_rss.svg"), "{}", html);
 }
 
 #[test]

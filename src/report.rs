@@ -87,6 +87,7 @@ fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
+#[derive(Clone, Copy)]
 enum GraphField {
     Cpu,
     Rss,
@@ -159,6 +160,117 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     root.present()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+}
+
+fn collect_series(entries: &[LogEntry], field: GraphField) -> (Vec<(f64, f64)>, f64) {
+    if entries.is_empty() {
+        return (Vec::new(), 0.0);
+    }
+    let mut sorted: Vec<&LogEntry> = entries.iter().collect();
+    sorted.sort_by_key(|e| e.timestamp.clone());
+    let start = chrono::DateTime::parse_from_rfc3339(&sorted[0].timestamp)
+        .map(|t| t.with_timezone(&Utc))
+        .unwrap();
+    let end = chrono::DateTime::parse_from_rfc3339(&sorted.last().unwrap().timestamp)
+        .map(|t| t.with_timezone(&Utc))
+        .unwrap();
+    let mut series = Vec::new();
+    for e in &sorted {
+        let t = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
+            .map(|tt| tt.with_timezone(&Utc))
+            .unwrap();
+        let x = (t - start).num_seconds() as f64;
+        let v = match field {
+            GraphField::Cpu => e.cpu_time_percent,
+            GraphField::Rss => e.memory.rss_kb as f64,
+        };
+        series.push((x, v));
+    }
+    let runtime = (end - start).num_seconds().max(1) as f64;
+    (series, runtime)
+}
+
+fn write_multi_svg(stats: &[Stats], out: &Path, field: GraphField) {
+    let mut data = Vec::new();
+    let mut x_max = 0.0f64;
+    let mut max_val = 0.0f64;
+    for s in stats {
+        if let Ok(entries) = read_log_entries(Path::new(&s.path)) {
+            let (series, runtime) = collect_series(&entries, field);
+            if series.is_empty() {
+                continue;
+            }
+            x_max = x_max.max(runtime);
+            for &(_, v) in &series {
+                max_val = max_val.max(v);
+            }
+            let base = Path::new(&s.path)
+                .file_name()
+                .map(|b| b.to_string_lossy().into_owned())
+                .unwrap_or_else(|| s.path.clone());
+            let label = format!("{} {}", s.pid, base);
+            data.push((label, series));
+        }
+    }
+    if data.is_empty() {
+        return;
+    }
+    if max_val <= 0.0 {
+        max_val = 1.0;
+    }
+    let root = SVGBackend::new(out, (600, 300)).into_drawing_area();
+    if root.fill(&WHITE).is_err() {
+        return;
+    }
+    let (y_desc, caption, scale) = match field {
+        GraphField::Cpu => ("CPU %", "Top CPU usage", 1.0),
+        GraphField::Rss => {
+            if max_val >= 1024.0 * 1024.0 {
+                ("RSS GB", "Top RSS (GB)", 1024.0 * 1024.0)
+            } else {
+                ("RSS MB", "Top RSS (MB)", 1024.0)
+            }
+        }
+    };
+    let y_max = (max_val / scale).max(1.0);
+    let mut chart = match ChartBuilder::on(&root)
+        .caption(caption, ("sans-serif", 20))
+        .margin(5)
+        .x_label_area_size(30)
+        .y_label_area_size(40)
+        .build_cartesian_2d(0f64..x_max, 0f64..y_max)
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    if chart
+        .configure_mesh()
+        .x_desc("time (s)")
+        .y_desc(y_desc)
+        .draw()
+        .is_err()
+    {
+        return;
+    }
+    for (i, (label, series)) in data.into_iter().enumerate() {
+        let color = Palette99::pick(i).mix(0.9);
+        if chart
+            .draw_series(LineSeries::new(
+                series.into_iter().map(|(x, v)| (x, v / scale)),
+                &color,
+            ))
+            .map(|l| {
+                l.label(label).legend(move |(x, y)| {
+                    PathElement::new(vec![(x, y), (x + 20, y)], color.clone())
+                })
+            })
+            .is_err()
+        {
+            return;
+        }
+    }
+    let _ = chart.configure_series_labels().border_style(&BLACK).draw();
+    let _ = root.present();
 }
 
 fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
@@ -369,6 +481,8 @@ fn render_single(s: &Stats, has_trace: bool) -> String {
 fn render_index(stats: &[Stats], link: bool) -> String {
     let mut out = String::new();
     out.push_str("<html><head><style>table,th,td{border:1px solid black;border-collapse:collapse;}pre{margin:0;}</style></head><body>\n");
+    out.push_str("<p>CPU usage<br><img src=\"top_cpu.svg\" alt=\"Top CPU usage graph\" /></p>\n");
+    out.push_str("<p>Peak RSS<br><img src=\"top_rss.svg\" alt=\"Top RSS graph\" /></p>\n");
     out.push_str("<table>\n");
     out.push_str(
         "<tr><th>PID</th><th>Command</th><th>Total runtime</th><th>Total CPU time</th><th>Avg CPU (%)</th><th>Peak RSS</th></tr>\n",
@@ -450,11 +564,14 @@ fn report_dir(path: &Path, out_dir: &Path, top_cpu: usize, top_rss: usize) {
     let mut by_rss = stats.clone();
     by_rss.sort_by_key(|s| std::cmp::Reverse(s.peak_rss));
 
+    let cpu_top: Vec<_> = by_cpu.iter().take(top_cpu).cloned().collect();
+    let rss_top: Vec<_> = by_rss.iter().take(top_rss).cloned().collect();
+
     let mut map: HashMap<String, Stats> = HashMap::new();
-    for s in by_cpu.into_iter().take(top_cpu) {
+    for s in cpu_top.clone() {
         map.entry(s.path.clone()).or_insert(s);
     }
-    for s in by_rss.into_iter().take(top_rss) {
+    for s in rss_top.clone() {
         map.entry(s.path.clone()).or_insert(s);
     }
     let mut selected: Vec<_> = map.into_values().collect();
@@ -466,6 +583,9 @@ fn report_dir(path: &Path, out_dir: &Path, top_cpu: usize, top_rss: usize) {
             .unwrap()
             .then_with(|| b.peak_rss.cmp(&a.peak_rss))
     });
+
+    write_multi_svg(&cpu_top, &out_dir.join("top_cpu.svg"), GraphField::Cpu);
+    write_multi_svg(&rss_top, &out_dir.join("top_rss.svg"), GraphField::Rss);
 
     // write index.html
     let index_html = render_index(&selected, true);
