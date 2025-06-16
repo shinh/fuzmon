@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use crate::config::{ReportArgs, finalize_report_config, load_config};
 use crate::log::{Frame, LogEntry, read_log_entries};
 
+const CPU_MIN: f64 = 0.1;
+
 #[derive(Clone)]
 struct Stats {
     pid: u32,
@@ -141,30 +143,61 @@ fn write_svg(entries: &[LogEntry], out: &Path, field: GraphField) -> io::Result<
         }
     };
     let y_max = (max_val / scale).max(1.0);
-    let mut chart = ChartBuilder::on(&root)
-        .caption(caption, ("sans-serif", 20))
-        .margin(5)
-        .x_label_area_size(40)
-        .y_label_area_size(40)
-        .build_cartesian_2d(start..end, 0f64..y_max)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    chart
-        .configure_mesh()
-        .x_desc("time")
-        .y_desc(y_desc)
-        .x_labels(5)
-        .y_labels(5)
-        .x_label_formatter(&|dt| dt.format("%H:%M:%S").to_string())
-        .draw()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    chart
-        .draw_series(LineSeries::new(
-            series.into_iter().map(|(x, v)| (x, v / scale)),
-            &BLUE,
-        ))
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    root.present()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    if matches!(field, GraphField::Cpu) {
+        let mut chart = ChartBuilder::on(&root)
+            .caption(caption, ("sans-serif", 20))
+            .margin(5)
+            .x_label_area_size(40)
+            .y_label_area_size(40)
+            .build_cartesian_2d(start..end, (CPU_MIN..y_max).log_scale())
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        chart
+            .configure_mesh()
+            .x_desc("time")
+            .y_desc(y_desc)
+            .x_labels(5)
+            .y_labels(5)
+            .x_label_formatter(&|dt| dt.format("%H:%M:%S").to_string())
+            .draw()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        chart
+            .draw_series(LineSeries::new(
+                series.into_iter().map(|(x, v)| {
+                    let val = v / scale;
+                    let val = if val < CPU_MIN { CPU_MIN } else { val };
+                    (x, val)
+                }),
+                &BLUE,
+            ))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        root.present()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    } else {
+        let mut chart = ChartBuilder::on(&root)
+            .caption(caption, ("sans-serif", 20))
+            .margin(5)
+            .x_label_area_size(40)
+            .y_label_area_size(40)
+            .build_cartesian_2d(start..end, 0f64..y_max)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        chart
+            .configure_mesh()
+            .x_desc("time")
+            .y_desc(y_desc)
+            .x_labels(5)
+            .y_labels(5)
+            .x_label_formatter(&|dt| dt.format("%H:%M:%S").to_string())
+            .draw()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        chart
+            .draw_series(LineSeries::new(
+                series.into_iter().map(|(x, v)| (x, v / scale)),
+                &BLUE,
+            ))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        root.present()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    }
 }
 
 fn collect_series(
@@ -252,47 +285,95 @@ fn write_multi_svg(stats: &[Stats], out: &Path, field: GraphField) {
         }
     };
     let y_max = (max_val / scale).max(1.0);
-    let mut chart = match ChartBuilder::on(&root)
-        .caption(caption, ("sans-serif", 20))
-        .margin(5)
-        .x_label_area_size(40)
-        .y_label_area_size(40)
-        .build_cartesian_2d(start..end, 0f64..y_max)
-    {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    if chart
-        .configure_mesh()
-        .x_desc("time")
-        .y_desc(y_desc)
-        .x_labels(5)
-        .y_labels(5)
-        .x_label_formatter(&|dt| dt.format("%H:%M:%S").to_string())
-        .draw()
-        .is_err()
-    {
-        return;
-    }
-    for (i, (label, series)) in data.into_iter().enumerate() {
-        let color = Palette99::pick(i).mix(0.9);
+    if matches!(field, GraphField::Cpu) {
+        let mut chart = match ChartBuilder::on(&root)
+            .caption(caption, ("sans-serif", 20))
+            .margin(5)
+            .x_label_area_size(40)
+            .y_label_area_size(40)
+            .build_cartesian_2d(start..end, (CPU_MIN..y_max).log_scale())
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
         if chart
-            .draw_series(LineSeries::new(
-                series.into_iter().map(|(x, v)| (x, v / scale)),
-                &color,
-            ))
-            .map(|l| {
-                l.label(label).legend(move |(x, y)| {
-                    PathElement::new(vec![(x, y), (x + 20, y)], color.clone())
-                })
-            })
+            .configure_mesh()
+            .x_desc("time")
+            .y_desc(y_desc)
+            .x_labels(5)
+            .y_labels(5)
+            .x_label_formatter(&|dt| dt.format("%H:%M:%S").to_string())
+            .draw()
             .is_err()
         {
             return;
         }
+        for (i, (label, series)) in data.into_iter().enumerate() {
+            let color = Palette99::pick(i).mix(0.9);
+            if chart
+                .draw_series(LineSeries::new(
+                    series.into_iter().map(|(x, v)| {
+                        let val = v / scale;
+                        let val = if val < CPU_MIN { CPU_MIN } else { val };
+                        (x, val)
+                    }),
+                    &color,
+                ))
+                .map(|l| {
+                    l.label(label).legend(move |(x, y)| {
+                        PathElement::new(vec![(x, y), (x + 20, y)], color.clone())
+                    })
+                })
+                .is_err()
+            {
+                return;
+            }
+        }
+        let _ = chart.configure_series_labels().border_style(&BLACK).draw();
+        let _ = root.present();
+    } else {
+        let mut chart = match ChartBuilder::on(&root)
+            .caption(caption, ("sans-serif", 20))
+            .margin(5)
+            .x_label_area_size(40)
+            .y_label_area_size(40)
+            .build_cartesian_2d(start..end, 0f64..y_max)
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        if chart
+            .configure_mesh()
+            .x_desc("time")
+            .y_desc(y_desc)
+            .x_labels(5)
+            .y_labels(5)
+            .x_label_formatter(&|dt| dt.format("%H:%M:%S").to_string())
+            .draw()
+            .is_err()
+        {
+            return;
+        }
+        for (i, (label, series)) in data.into_iter().enumerate() {
+            let color = Palette99::pick(i).mix(0.9);
+            if chart
+                .draw_series(LineSeries::new(
+                    series.into_iter().map(|(x, v)| (x, v / scale)),
+                    &color,
+                ))
+                .map(|l| {
+                    l.label(label).legend(move |(x, y)| {
+                        PathElement::new(vec![(x, y), (x + 20, y)], color.clone())
+                    })
+                })
+                .is_err()
+            {
+                return;
+            }
+        }
+        let _ = chart.configure_series_labels().border_style(&BLACK).draw();
+        let _ = root.present();
     }
-    let _ = chart.configure_series_labels().border_style(&BLACK).draw();
-    let _ = root.present();
 }
 
 fn write_chrome_trace(entries: &[LogEntry], out: &Path) -> io::Result<()> {
