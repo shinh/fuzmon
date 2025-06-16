@@ -204,10 +204,11 @@ fn write_multi_svg(stats: &[Stats], out: &Path, field: GraphField) {
             for &(_, v) in &series {
                 max_val = max_val.max(v);
             }
-            let base = Path::new(&s.path)
+            let token = s.cmd.split_whitespace().next().unwrap_or("");
+            let base = Path::new(token)
                 .file_name()
                 .map(|b| b.to_string_lossy().into_owned())
-                .unwrap_or_else(|| s.path.clone());
+                .unwrap_or_else(|| token.to_string());
             let label = format!("{} {}", s.pid, base);
             data.push((label, series));
         }
